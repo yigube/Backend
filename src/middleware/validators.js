@@ -43,3 +43,29 @@ export const resumenRules = [
   query('periodoId').isInt({ min: 1 }),
   query('totalClases').optional().isInt({ min: 0 })
 ];
+
+export const crearColegioRules = [
+  body('nombre').isString().notEmpty()
+];
+
+export const actualizarColegioRules = [
+  param('id').isInt({ min: 1 }),
+  body('nombre').optional().isString().notEmpty()
+];
+
+export const crearDocenteRules = [
+  body('nombre').isString().notEmpty(),
+  body('email').isEmail().withMessage('Email invalido'),
+  body('password').isString().isLength({ min: 4 }).withMessage('Password invalido'),
+  body('cursoIds').optional().isArray(),
+  body('schoolId').optional().isInt({ min: 1 })
+];
+
+export const actualizarDocenteRules = [
+  param('id').isInt({ min: 1 }),
+  body('nombre').optional().isString().notEmpty(),
+  body('email').optional().isEmail(),
+  body('password').optional().isString().isLength({ min: 4 }),
+  body('cursoIds').optional().isArray(),
+  body('schoolId').optional().isInt({ min: 1 })
+];

@@ -1,12 +1,14 @@
 ﻿// CRUD basico para cursos, estudiantes y periodos con scope por colegio.
 import { Op } from 'sequelize';
+import bcrypt from 'bcrypt';
 import { Curso, Estudiante, Periodo, Usuario, CursoDocente, Colegio } from '../models/index.js';
 
 const isDocente = (req) => req.user?.rol === 'docente';
 
 /** Crea un curso asociado al colegio del usuario. Si es docente, queda asignado a el mismo. */
 export async function crearCurso(req, res){
-  const curso = await Curso.create({ ...req.body, schoolId: req.user.schoolId });
+  const schoolId = req.user.rol === 'admin' && req.body.schoolId ? req.body.schoolId : req.user.schoolId;
+  const curso = await Curso.create({ ...req.body, schoolId });
 
   if (isDocente(req)) {
     await curso.addDocente(req.user.id, { through: { schoolId: req.user.schoolId } });
@@ -22,8 +24,9 @@ export async function crearCurso(req, res){
 
 /** Lista cursos del colegio actual. Docente ve solo los asignados. */
 export async function listarCursos(req, res){
-  const { q } = req.query;
-  const where = { schoolId: req.user.schoolId };
+  const { q, schoolId: querySchool } = req.query;
+  const schoolId = req.user.rol === 'admin' && querySchool ? querySchool : req.user.schoolId;
+  const where = { schoolId };
   if (q) where.nombre = { [Op.like]: `%${q}%` };
 
   if (isDocente(req)) {
@@ -98,7 +101,7 @@ export async function listarEstudiantes(req, res){
 
 /** Lista docentes de un colegio (admin puede filtrar por schoolId). */
 export async function listarDocentes(req, res) {
-  const schoolId = req.query.schoolId || req.user.schoolId;
+  const schoolId = (req.user.rol === 'admin' && req.query.schoolId) ? req.query.schoolId : req.user.schoolId;
   const docentes = await Usuario.findAll({
     where: { schoolId, rol: 'docente' },
     attributes: ['id', 'nombre', 'email', 'schoolId'],
@@ -114,13 +117,15 @@ export async function listarDocentes(req, res) {
 
 /** Crea un periodo academico en el colegio actual. */
 export async function crearPeriodo(req, res){
-  const obj = await Periodo.create({ ...req.body, schoolId: req.user.schoolId });
+  const schoolId = req.user.rol === 'admin' && req.body.schoolId ? req.body.schoolId : req.user.schoolId;
+  const obj = await Periodo.create({ ...req.body, schoolId });
   res.status(201).json(obj);
 }
 
 /** Lista periodos del colegio actual. */
 export async function listarPeriodos(req, res){
-  res.json(await Periodo.findAll({ where: { schoolId: req.user.schoolId } }));
+  const schoolId = (req.user.rol === 'admin' && req.query.schoolId) ? req.query.schoolId : req.user.schoolId;
+  res.json(await Periodo.findAll({ where: { schoolId } }));
 }
 
 /** Actualiza datos de un periodo dentro del mismo colegio. */
@@ -165,4 +170,79 @@ export async function seedCursoDocente(req, res){
 export async function listarColegios(req, res) {
   const data = await Colegio.findAll({ attributes: ['id', 'nombre'] });
   res.json(data);
+}
+
+/** Crea un colegio (solo admin). */
+export async function crearColegio(req, res) {
+  const colegio = await Colegio.create({ nombre: req.body.nombre });
+  res.status(201).json(colegio);
+}
+
+/** Actualiza nombre de un colegio (solo admin). */
+export async function actualizarColegio(req, res) {
+  const colegio = await Colegio.findByPk(req.params.id);
+  if (!colegio) return res.status(404).json({ error: 'Colegio no encontrado' });
+  if (req.body.nombre) colegio.nombre = req.body.nombre;
+  await colegio.save();
+  res.json(colegio);
+}
+
+/** Elimina un colegio (solo admin). */
+export async function eliminarColegio(req, res) {
+  const colegio = await Colegio.findByPk(req.params.id);
+  if (!colegio) return res.status(404).json({ error: 'Colegio no encontrado' });
+  await colegio.destroy();
+  res.json({ ok: true });
+}
+
+/** Crea un docente y lo asigna a cursos del mismo colegio (solo admin). */
+export async function crearDocente(req, res) {
+  const { nombre, email, password, cursoIds = [], schoolId: bodySchool } = req.body;
+  const passwordHash = await bcrypt.hash(password, 10);
+  const schoolId = req.user.rol === 'admin' && bodySchool ? bodySchool : req.user.schoolId;
+
+  const docente = await Usuario.create({ nombre, email, passwordHash, rol: 'docente', schoolId });
+
+  if (Array.isArray(cursoIds) && cursoIds.length) {
+    const cursos = await Curso.findAll({ where: { id: { [Op.in]: cursoIds }, schoolId } });
+    await docente.setCursos(cursos, { through: { schoolId } });
+  }
+
+  const cursosDocente = await docente.getCursos({ attributes: ['id', 'nombre'] });
+  res.status(201).json({ ...docente.toJSON(), cursos: cursosDocente });
+}
+
+/** Actualiza datos y asignaciones de un docente del mismo colegio (solo admin). */
+export async function actualizarDocente(req, res) {
+  const { nombre, email, password, cursoIds, schoolId: bodySchool } = req.body;
+  const where = { id: req.params.id, rol: 'docente' };
+  if (req.user.rol !== 'admin') where.schoolId = req.user.schoolId;
+  const docente = await Usuario.findOne({ where });
+  if (!docente) return res.status(404).json({ error: 'Docente no encontrado' });
+
+  const targetSchoolId = req.user.rol === 'admin' && bodySchool ? bodySchool : docente.schoolId;
+
+  if (nombre) docente.nombre = nombre;
+  if (email) docente.email = email;
+  if (password) docente.passwordHash = await bcrypt.hash(password, 10);
+  docente.schoolId = targetSchoolId;
+  await docente.save();
+
+  if (Array.isArray(cursoIds)) {
+    const cursos = await Curso.findAll({ where: { id: { [Op.in]: cursoIds }, schoolId: targetSchoolId } });
+    await docente.setCursos(cursos, { through: { schoolId: targetSchoolId } });
+  }
+
+  const cursosDocente = await docente.getCursos({ attributes: ['id', 'nombre'] });
+  res.json({ ...docente.toJSON(), cursos: cursosDocente });
+}
+
+/** Elimina un docente del mismo colegio (solo admin). */
+export async function eliminarDocente(req, res) {
+  const where = { id: req.params.id, rol: 'docente' };
+  if (req.user.rol !== 'admin') where.schoolId = req.user.schoolId;
+  const docente = await Usuario.findOne({ where });
+  if (!docente) return res.status(404).json({ error: 'Docente no encontrado' });
+  await docente.destroy();
+  res.json({ ok: true });
 }
