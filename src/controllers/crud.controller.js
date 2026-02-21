@@ -7,10 +7,12 @@ const isDocente = (req) => req.user?.rol === 'docente';
 
 /** Crea un curso asociado al colegio del usuario. Si es docente, queda asignado a el mismo. */
 export async function crearCurso(req, res){
+  // Admin puede crear en otro colegio; docentes/otros quedan en su propio colegio.
   const schoolId = req.user.rol === 'admin' && req.body.schoolId ? req.body.schoolId : req.user.schoolId;
   const curso = await Curso.create({ ...req.body, schoolId });
 
   if (isDocente(req)) {
+    // Si crea un docente, se autoasigna el curso para limitar su visibilidad.
     await curso.addDocente(req.user.id, { through: { schoolId: req.user.schoolId } });
   } else if (Array.isArray(req.body.docenteIds) && req.body.docenteIds.length) {
     const docentes = await Usuario.findAll({
@@ -30,6 +32,7 @@ export async function listarCursos(req, res){
   if (q) where.nombre = { [Op.like]: `%${q}%` };
 
   if (isDocente(req)) {
+    // Se filtra por join para asegurar que solo vea cursos asignados.
     const cursos = await Curso.findAll({
       where,
       include: [{
@@ -60,6 +63,7 @@ export async function actualizarCurso(req, res){
   await curso.save();
 
   if (!isDocente(req) && Array.isArray(req.body.docenteIds)) {
+    // Solo admins pueden reasignar docentes a un curso.
     const docentes = await Usuario.findAll({
       where: { id: { [Op.in]: req.body.docenteIds }, schoolId: req.user.schoolId, rol: 'docente' }
     });
@@ -85,6 +89,7 @@ export async function eliminarCurso(req, res){
 
 /** Crea un estudiante validando que el curso pertenezca al mismo colegio. */
 export async function crearEstudiante(req, res){
+  // Garantiza que el curso pertenece al mismo colegio del usuario.
   const curso = await Curso.findOne({ where: { id: req.body.cursoId, schoolId: req.user.schoolId } });
   if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
   const obj = await Estudiante.create({ ...req.body });
@@ -93,6 +98,7 @@ export async function crearEstudiante(req, res){
 
 /** Lista estudiantes del colegio mediante join con cursos. */
 export async function listarEstudiantes(req, res){
+  // Join con cursos para acotar al colegio del usuario autenticado.
   const ests = await Estudiante.findAll({
     include: { model: Curso, where: { schoolId: req.user.schoolId }, attributes: [] }
   });
@@ -204,6 +210,7 @@ export async function crearDocente(req, res) {
   const docente = await Usuario.create({ nombre, email, passwordHash, rol: 'docente', schoolId });
 
   if (Array.isArray(cursoIds) && cursoIds.length) {
+    // Vincula cursos existentes del mismo colegio.
     const cursos = await Curso.findAll({ where: { id: { [Op.in]: cursoIds }, schoolId } });
     await docente.setCursos(cursos, { through: { schoolId } });
   }
@@ -220,6 +227,7 @@ export async function actualizarDocente(req, res) {
   const docente = await Usuario.findOne({ where });
   if (!docente) return res.status(404).json({ error: 'Docente no encontrado' });
 
+  // Admin puede mover al docente de colegio; no-admin no.
   const targetSchoolId = req.user.rol === 'admin' && bodySchool ? bodySchool : docente.schoolId;
 
   if (nombre) docente.nombre = nombre;

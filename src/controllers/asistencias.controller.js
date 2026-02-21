@@ -15,6 +15,7 @@ export async function registrarDesdeQR(req, res) {
   });
   if (!estudiante) return res.status(404).json({ error: 'Estudiante no encontrado' });
 
+  // Normaliza fecha a YYYY-MM-DD para comparar con periodos (almacenados por rango).
   const fechaISO = fecha instanceof Date ? fecha.toISOString().slice(0, 10) : fecha;
   const periodo = await Periodo.findOne({
     where: { fechaInicio: { [Op.lte]: fechaISO }, fechaFin: { [Op.gte]: fechaISO }, schoolId }
@@ -61,6 +62,7 @@ export async function resumenCurso(req, res) {
   const estudiantes = await Estudiante.findAll({ where: { cursoId } });
   const asistencias = await Asistencia.findAll({ where: { cursoId, periodoId, schoolId } });
   const sesionesRegistradas = new Set(asistencias.map(a => a.fecha)).size;
+  // Usa el mayor entre sesiones registradas y el total reportado por el cliente.
   const totalClasesPeriodo = Math.max(
     sesionesRegistradas,
     Number(totalClasesParam) || sesionesRegistradas || 0

@@ -11,6 +11,7 @@ export async function login(req, res) {
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ error: 'Credenciales invalidas' });
   const colegio = await Colegio.findOne({ where: { id: user.schoolId } });
+  // El token incluye rol y colegio para aplicar autorizacion y scoping sin otra consulta.
   const token = jwt.sign(
     { id: user.id, rol: user.rol, nombre: user.nombre, schoolId: user.schoolId, schoolName: colegio?.nombre },
     process.env.JWT_SECRET,

@@ -12,7 +12,7 @@ Usuario.init({
   nombre: { type: DataTypes.STRING, allowNull: false },
   email: { type: DataTypes.STRING, allowNull: false, unique: true },
   passwordHash: { type: DataTypes.STRING, allowNull: false },
-  rol: { type: DataTypes.ENUM('docente','admin'), allowNull: false, defaultValue: 'docente' },
+  rol: { type: DataTypes.ENUM('docente', 'admin', 'rector', 'coordinador'), allowNull: false, defaultValue: 'docente' },
   schoolId: { type: DataTypes.INTEGER, allowNull: false }
 }, { sequelize, modelName: 'usuario' });
 

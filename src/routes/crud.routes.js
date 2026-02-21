@@ -28,10 +28,10 @@ import { handleValidation } from '../middleware/validationResult.js';
 import { asyncHandler } from '../middleware/errors.js';
 
 const router = Router();
-router.post('/cursos', authRequired, requireRole('admin','docente'), crearCursoRules, handleValidation, asyncHandler(crearCurso));
+router.post('/cursos', authRequired, requireRole('admin', 'rector', 'coordinador'), crearCursoRules, handleValidation, asyncHandler(crearCurso));
 router.get('/cursos', authRequired, asyncHandler(listarCursos));
-router.put('/cursos/:id', authRequired, requireRole('admin','docente'), actualizarCursoRules, handleValidation, asyncHandler(actualizarCurso));
-router.delete('/cursos/:id', authRequired, requireRole('admin','docente'), asyncHandler(eliminarCurso));
+router.put('/cursos/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), actualizarCursoRules, handleValidation, asyncHandler(actualizarCurso));
+router.delete('/cursos/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(eliminarCurso));
 
 router.post('/estudiantes', authRequired, requireRole('admin'), crearEstudianteRules, handleValidation, asyncHandler(crearEstudiante));
 router.get('/estudiantes', authRequired, asyncHandler(listarEstudiantes));

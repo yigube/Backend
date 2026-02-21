@@ -15,7 +15,7 @@ module.exports = {
       nombre: { allowNull: false, type: Sequelize.STRING },
       email: { allowNull: false, unique: true, type: Sequelize.STRING },
       password_hash: { allowNull: false, type: Sequelize.STRING },
-      rol: { allowNull: false, type: Sequelize.ENUM('docente', 'admin'), defaultValue: 'docente' },
+      rol: { allowNull: false, type: Sequelize.ENUM('docente', 'admin', 'rector', 'coordinador'), defaultValue: 'docente' },
       school_id: {
         allowNull: false,
         type: Sequelize.INTEGER,
