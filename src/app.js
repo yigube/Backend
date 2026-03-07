@@ -9,14 +9,15 @@ import routes from './routes/index.js';
 import { connectDB } from './config/database.js';
 import { validateEnv } from './config/env.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
+import { createCorsOriginOption } from './utils/cors.js';
 
 dotenv.config();
 validateEnv();
 const app = express();
 
-const allowedOrigins = (process.env.CORS_ORIGINS || '').split(',').filter(Boolean);
-const corsOptions = allowedOrigins.length
-  ? { origin: allowedOrigins, credentials: true }
+const corsOriginOption = createCorsOriginOption(process.env.CORS_ORIGINS);
+const corsOptions = corsOriginOption !== '*'
+  ? { origin: corsOriginOption, credentials: true }
   : { origin: '*', credentials: false }; // Evita credenciales con wildcard bloqueadas por navegador
 
 if (!process.env.JWT_SECRET) {

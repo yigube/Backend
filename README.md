@@ -10,10 +10,16 @@ Endpoints clave:
 
 ## Configurar
 1) Copia `.env.example` a `.env` y ajusta variables.
+   - Para frontend web, usa `CORS_ORIGINS` con comodin de puerto (ej: `http://192.168.1.247:*`, `http://localhost:*`, `http://127.0.0.1:*`).
 2) `npm install`
 3) Levanta MySQL con Docker o tu propio servidor.
 4) `npm run db:seed`
-5) `npm run dev`
+5) Ejecuta el backend:
+   - `npm run dev` (inicio normal)
+   - `npm run dev:watch` (recarga automática con Node)
+   - `npm run dev:nodemon` (recarga automática con nodemon)
+
+Nota: si usas nodemon manualmente, no corras `nodemon dev` fuera de scripts sin tener el archivo `dev` en la raíz, porque Node intentará cargar un módulo llamado `dev`.
 
 Ver detalles en instrucciones del chat.
 

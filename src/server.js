@@ -3,10 +3,11 @@ import { init } from './app.js';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
+import { createCorsOriginOption } from './utils/cors.js';
 
 const basePort = Number(process.env.PORT) || 4000;
-const socketCorsOrigins = (process.env.CORS_ORIGINS || '').split(',').filter(Boolean);
-const corsConfig = socketCorsOrigins.length ? { origin: socketCorsOrigins, credentials: true } : { origin: '*', credentials: true };
+const socketCorsOrigin = createCorsOriginOption(process.env.CORS_ORIGINS);
+const corsConfig = socketCorsOrigin !== '*' ? { origin: socketCorsOrigin, credentials: true } : { origin: '*', credentials: true };
 
 init().then(app => {
   const httpServer = createServer(app);

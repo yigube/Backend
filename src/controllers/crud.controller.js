@@ -4,6 +4,10 @@ import bcrypt from 'bcrypt';
 import { Curso, Estudiante, Periodo, Usuario, CursoDocente, Colegio } from '../models/index.js';
 
 const isDocente = (req) => req.user?.rol === 'docente';
+const normalizedSchoolId = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
 
 /** Crea un curso asociado al colegio del usuario. Si es docente, queda asignado a el mismo. */
 export async function crearCurso(req, res){
@@ -27,7 +31,8 @@ export async function crearCurso(req, res){
 /** Lista cursos del colegio actual. Docente ve solo los asignados. */
 export async function listarCursos(req, res){
   const { q, schoolId: querySchool } = req.query;
-  const schoolId = req.user.rol === 'admin' && querySchool ? querySchool : req.user.schoolId;
+  const querySchoolId = normalizedSchoolId(querySchool);
+  const schoolId = !isDocente(req) && querySchoolId ? querySchoolId : req.user.schoolId;
   const where = { schoolId };
   if (q) where.nombre = { [Op.like]: `%${q}%` };
 
@@ -107,7 +112,8 @@ export async function listarEstudiantes(req, res){
 
 /** Lista docentes de un colegio (admin puede filtrar por schoolId). */
 export async function listarDocentes(req, res) {
-  const schoolId = (req.user.rol === 'admin' && req.query.schoolId) ? req.query.schoolId : req.user.schoolId;
+  const querySchoolId = normalizedSchoolId(req.query.schoolId);
+  const schoolId = (!isDocente(req) && querySchoolId) ? querySchoolId : req.user.schoolId;
   const docentes = await Usuario.findAll({
     where: { schoolId, rol: 'docente' },
     attributes: ['id', 'nombre', 'email', 'schoolId'],
