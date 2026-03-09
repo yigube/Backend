@@ -51,8 +51,10 @@ export async function connectDB() {
     } catch (err) {
       const canForce = process.env.NODE_ENV !== 'production' && !isTest;
       if (canForce) {
-        console.warn('Sync con alter fallo, reintentando con force (reinicia tablas en dev):', err.message);
-        await sequelize.sync({ force: true });
+        // Evita borrado destructivo automatico en desarrollo.
+        // Si alter falla, mantenemos esquema actual para permitir arranque.
+        console.warn('Sync con alter fallo, continuando sin alter para evitar perdida de datos:', err.message);
+        await sequelize.sync();
       } else {
         throw err;
       }

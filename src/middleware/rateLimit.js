@@ -1,6 +1,10 @@
 ﻿// Rate limit in-memory para endpoint de login.
 const buckets = new Map();
 
+export function resetLoginRateLimitBuckets() {
+  buckets.clear();
+}
+
 export function rateLimitLogin({ windowMs = 15 * 60 * 1000, max = 30 } = {}) {
   return (req, res, next) => {
     const key = req.ip || req.headers['x-forwarded-for'] || 'anon';

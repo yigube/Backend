@@ -46,7 +46,7 @@ services:
       DB_USER: ${DB_USER:-appuser}
       DB_PASSWORD: ${DB_PASSWORD:-changeme}
       DB_NAME: ${DB_NAME:-asistencia_db}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://192.168.1.247:*,http://localhost:*,http://127.0.0.1:*}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://192.168.1.247:*,http://192.168.100.5:*,http://localhost:*,http://127.0.0.1:*}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-500}
       DB_TZ: ${DB_TZ:-Z}
     ports:

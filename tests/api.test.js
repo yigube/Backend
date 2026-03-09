@@ -4,12 +4,14 @@ import bcrypt from 'bcrypt';
 import { init } from '../src/app.js';
 import { sequelize } from '../src/config/database.js';
 import { Usuario, Colegio, Curso, Estudiante, Periodo } from '../src/models/index.js';
+import { resetLoginRateLimitBuckets } from '../src/middleware/rateLimit.js';
 
 let app;
 let school;
 let otherSchool;
 let adminToken;
 let teacherToken;
+let coordinadorToken;
 let curso;
 let otroCurso;
 let periodo;
@@ -34,6 +36,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  resetLoginRateLimitBuckets();
   await sequelize.sync({ force: true });
   school = await Colegio.create({ nombre: 'Colegio Test' });
   otherSchool = await Colegio.create({ nombre: 'Colegio Dos' });
@@ -43,6 +46,13 @@ beforeEach(async () => {
     email: 'admin@demo.com',
     passwordHash: await bcrypt.hash('admin123', 10),
     rol: 'admin',
+    schoolId: school.id
+  });
+  await Usuario.create({
+    nombre: 'Coordinador',
+    email: 'coordinador@demo.com',
+    passwordHash: await bcrypt.hash('coord123', 10),
+    rol: 'coordinador',
     schoolId: school.id
   });
   await Usuario.create({
@@ -68,6 +78,7 @@ beforeEach(async () => {
   await Periodo.create({ nombre: 'P1-Other', fechaInicio: '2025-01-01', fechaFin: '2025-01-31', schoolId: otherSchool.id });
 
   adminToken = await login('admin@demo.com', 'admin123');
+  coordinadorToken = await login('coordinador@demo.com', 'coord123');
   teacherToken = await login('docente@demo.com', 'doc123');
 });
 
@@ -123,6 +134,123 @@ test('Admin crea curso y solo lista los de su colegio', async () => {
   const names = resList.body.map(c => c.nombre);
   expect(names).toEqual(expect.arrayContaining(['Matematicas', 'Fisica']));
   expect(resList.body.every(c => c.schoolId === school.id)).toBe(true);
+});
+
+test('Admin crea, actualiza y elimina curso en otro colegio', async () => {
+  const createOther = await request(app)
+    .post('/cursos')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({ nombre: 'Biologia', schoolId: otherSchool.id });
+  expect(createOther.status).toBe(201);
+  expect(createOther.body.schoolId).toBe(otherSchool.id);
+
+  const listOther = await request(app)
+    .get(`/cursos?schoolId=${otherSchool.id}`)
+    .set('Authorization', `Bearer ${adminToken}`);
+  expect(listOther.status).toBe(200);
+  expect(listOther.body.some((c) => c.id === createOther.body.id)).toBe(true);
+
+  const updateOther = await request(app)
+    .put(`/cursos/${createOther.body.id}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({ nombre: 'Biologia Avanzada' });
+  expect(updateOther.status).toBe(200);
+  expect(updateOther.body.nombre).toBe('Biologia Avanzada');
+
+  const deleteOther = await request(app)
+    .delete(`/cursos/${createOther.body.id}`)
+    .set('Authorization', `Bearer ${adminToken}`);
+  expect(deleteOther.status).toBe(200);
+  expect(deleteOther.body).toEqual({ ok: true });
+});
+
+test('Admin lista cursos disponibles para asignar docentes por colegio', async () => {
+  const sameSchool = await request(app)
+    .get('/docentes/cursos-disponibles')
+    .set('Authorization', `Bearer ${adminToken}`);
+  expect(sameSchool.status).toBe(200);
+  expect(sameSchool.body.length).toBe(1);
+  expect(sameSchool.body[0].id).toBe(curso.id);
+  expect(sameSchool.body[0].schoolId).toBe(school.id);
+
+  const other = await request(app)
+    .get(`/docentes/cursos-disponibles?schoolId=${otherSchool.id}`)
+    .set('Authorization', `Bearer ${adminToken}`);
+  expect(other.status).toBe(200);
+  expect(other.body.length).toBe(1);
+  expect(other.body[0].id).toBe(otroCurso.id);
+  expect(other.body[0].schoolId).toBe(otherSchool.id);
+});
+
+test('Coordinador puede consultar cursos disponibles y crear docente en otro colegio', async () => {
+  const listSchools = await request(app)
+    .get('/colegios')
+    .set('Authorization', `Bearer ${coordinadorToken}`);
+  expect(listSchools.status).toBe(200);
+  expect(listSchools.body.length).toBeGreaterThanOrEqual(2);
+
+  const cursosOther = await request(app)
+    .get(`/docentes/cursos-disponibles?schoolId=${otherSchool.id}`)
+    .set('Authorization', `Bearer ${coordinadorToken}`);
+  expect(cursosOther.status).toBe(200);
+  expect(cursosOther.body.map((c) => c.id)).toEqual([otroCurso.id]);
+
+  const cursosPorColegio = await request(app)
+    .get(`/colegios/${otherSchool.id}/cursos`)
+    .set('Authorization', `Bearer ${coordinadorToken}`);
+  expect(cursosPorColegio.status).toBe(200);
+  expect(cursosPorColegio.body.map((c) => c.id)).toEqual([otroCurso.id]);
+
+  const createInOther = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${coordinadorToken}`)
+    .send({
+      nombre: 'Docente Coord',
+      email: 'docente.coord@demo.com',
+      password: 'doc1234',
+      schoolId: otherSchool.id,
+      cursoIds: [otroCurso.id]
+    });
+  expect(createInOther.status).toBe(201);
+  expect(createInOther.body.schoolId).toBe(otherSchool.id);
+  expect(createInOther.body.cursos.map((c) => c.id)).toEqual([otroCurso.id]);
+});
+
+test('Admin crea docente y asigna cursos del colegio seleccionado', async () => {
+  const res = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Nuevo',
+      email: 'docente.nuevo@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id]
+    });
+
+  expect(res.status).toBe(201);
+  expect(res.body.schoolId).toBe(school.id);
+  expect(Array.isArray(res.body.cursos)).toBe(true);
+  expect(res.body.cursos.map((c) => c.id)).toEqual([curso.id]);
+});
+
+test('Admin no puede crear docente con cursos de otro colegio', async () => {
+  const res = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Invalido',
+      email: 'docente.invalido@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [otroCurso.id]
+    });
+
+  expect(res.status).toBe(400);
+  expect(res.body).toEqual({ error: 'Uno o mas cursos no pertenecen al colegio seleccionado' });
+
+  const notCreated = await Usuario.findOne({ where: { email: 'docente.invalido@demo.com' } });
+  expect(notCreated).toBeNull();
 });
 
 test('Admin no crea estudiante en curso de otro colegio', async () => {

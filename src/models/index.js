@@ -4,7 +4,8 @@ import { sequelize } from '../config/database.js';
 
 export class Colegio extends Model {}
 Colegio.init({
-  nombre: { type: DataTypes.STRING, allowNull: false }
+  nombre: { type: DataTypes.STRING, allowNull: false },
+  codigoDane: { type: DataTypes.STRING, allowNull: true, unique: true }
 }, { sequelize, modelName: 'colegio' });
 
 export class Usuario extends Model {}

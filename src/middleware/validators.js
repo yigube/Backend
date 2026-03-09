@@ -13,7 +13,10 @@ export const qrRules = [
   body('presente').optional().isBoolean()
 ];
 
-export const crearCursoRules = [body('nombre').isString().notEmpty()];
+export const crearCursoRules = [
+  body('nombre').isString().notEmpty(),
+  body('schoolId').optional().isInt({ min: 1 })
+];
 export const actualizarCursoRules = [
   param('id').isInt({ min: 1 }),
   body('nombre').optional().isString().notEmpty(),
@@ -45,27 +48,35 @@ export const resumenRules = [
 ];
 
 export const crearColegioRules = [
-  body('nombre').isString().notEmpty()
+  body('nombre').isString().notEmpty(),
+  body('codigoDane').optional({ values: 'falsy' }).isString().isLength({ min: 3, max: 30 })
 ];
 
 export const actualizarColegioRules = [
   param('id').isInt({ min: 1 }),
-  body('nombre').optional().isString().notEmpty()
+  body('nombre').optional().isString().notEmpty(),
+  body('codigoDane').optional({ values: 'falsy' }).isString().isLength({ min: 3, max: 30 })
+];
+
+export const listarCursosColegioRules = [
+  param('schoolId').isInt({ min: 1 })
 ];
 
 export const crearDocenteRules = [
-  body('nombre').isString().notEmpty(),
+  body('nombre').isString().notEmpty().withMessage('Nombre requerido'),
   body('email').isEmail().withMessage('Email invalido'),
   body('password').isString().isLength({ min: 4 }).withMessage('Password invalido'),
   body('cursoIds').optional().isArray(),
-  body('schoolId').optional().isInt({ min: 1 })
+  body('cursoIds.*').optional().isInt({ min: 1 }).withMessage('cursoIds debe contener IDs validos'),
+  body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido')
 ];
 
 export const actualizarDocenteRules = [
   param('id').isInt({ min: 1 }),
-  body('nombre').optional().isString().notEmpty(),
-  body('email').optional().isEmail(),
-  body('password').optional().isString().isLength({ min: 4 }),
+  body('nombre').optional().isString().notEmpty().withMessage('Nombre invalido'),
+  body('email').optional().isEmail().withMessage('Email invalido'),
+  body('password').optional().isString().isLength({ min: 4 }).withMessage('Password invalido'),
   body('cursoIds').optional().isArray(),
-  body('schoolId').optional().isInt({ min: 1 })
+  body('cursoIds.*').optional().isInt({ min: 1 }).withMessage('cursoIds debe contener IDs validos'),
+  body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido')
 ];

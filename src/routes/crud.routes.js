@@ -10,6 +10,8 @@ import {
   crearPeriodo,
   listarPeriodos,
   listarDocentes,
+  listarCursosDisponiblesDocente,
+  listarCursosPorColegio,
   actualizarCurso,
   eliminarCurso,
   actualizarPeriodo,
@@ -23,7 +25,7 @@ import {
   actualizarDocente,
   eliminarDocente
 } from '../controllers/crud.controller.js';
-import { crearCursoRules, actualizarCursoRules, crearEstudianteRules, crearPeriodoRules, actualizarPeriodoRules, crearColegioRules, actualizarColegioRules, crearDocenteRules, actualizarDocenteRules } from '../middleware/validators.js';
+import { crearCursoRules, actualizarCursoRules, crearEstudianteRules, crearPeriodoRules, actualizarPeriodoRules, crearColegioRules, actualizarColegioRules, listarCursosColegioRules, crearDocenteRules, actualizarDocenteRules } from '../middleware/validators.js';
 import { handleValidation } from '../middleware/validationResult.js';
 import { asyncHandler } from '../middleware/errors.js';
 
@@ -36,6 +38,7 @@ router.delete('/cursos/:id', authRequired, requireRole('admin', 'rector', 'coord
 router.post('/estudiantes', authRequired, requireRole('admin'), crearEstudianteRules, handleValidation, asyncHandler(crearEstudiante));
 router.get('/estudiantes', authRequired, asyncHandler(listarEstudiantes));
 router.get('/docentes', authRequired, asyncHandler(listarDocentes));
+router.get('/docentes/cursos-disponibles', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(listarCursosDisponiblesDocente));
 
 router.post('/periodos', authRequired, requireRole('admin'), crearPeriodoRules, handleValidation, asyncHandler(crearPeriodo));
 router.get('/periodos', authRequired, asyncHandler(listarPeriodos));
@@ -43,12 +46,13 @@ router.put('/periodos/:id', authRequired, requireRole('admin'), actualizarPeriod
 router.delete('/periodos/:id', authRequired, requireRole('admin'), asyncHandler(eliminarPeriodo));
 
 router.post('/curso-docentes/seed', authRequired, requireRole('admin'), asyncHandler(seedCursoDocente));
-router.get('/colegios', authRequired, requireRole('admin'), asyncHandler(listarColegios));
+router.get('/colegios', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(listarColegios));
+router.get('/colegios/:schoolId/cursos', authRequired, requireRole('admin', 'rector', 'coordinador'), listarCursosColegioRules, handleValidation, asyncHandler(listarCursosPorColegio));
 router.post('/colegios', authRequired, requireRole('admin'), crearColegioRules, handleValidation, asyncHandler(crearColegio));
 router.put('/colegios/:id', authRequired, requireRole('admin'), actualizarColegioRules, handleValidation, asyncHandler(actualizarColegio));
 router.delete('/colegios/:id', authRequired, requireRole('admin'), asyncHandler(eliminarColegio));
-router.post('/docentes', authRequired, requireRole('admin'), crearDocenteRules, handleValidation, asyncHandler(crearDocente));
-router.put('/docentes/:id', authRequired, requireRole('admin'), actualizarDocenteRules, handleValidation, asyncHandler(actualizarDocente));
-router.delete('/docentes/:id', authRequired, requireRole('admin'), asyncHandler(eliminarDocente));
+router.post('/docentes', authRequired, requireRole('admin', 'rector', 'coordinador'), crearDocenteRules, handleValidation, asyncHandler(crearDocente));
+router.put('/docentes/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), actualizarDocenteRules, handleValidation, asyncHandler(actualizarDocente));
+router.delete('/docentes/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(eliminarDocente));
 
 export default router;
