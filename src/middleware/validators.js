@@ -49,13 +49,25 @@ export const resumenRules = [
 
 export const crearColegioRules = [
   body('nombre').isString().notEmpty(),
-  body('codigoDane').optional({ values: 'falsy' }).isString().isLength({ min: 3, max: 30 })
+  body('codigoDane').optional({ values: 'falsy' }).isString().isLength({ min: 3, max: 30 }),
+  body('rectorNombre').optional({ values: 'falsy' }).isString().isLength({ min: 2, max: 120 }),
+  body('rectorApellido').optional({ values: 'falsy' }).isString().isLength({ min: 2, max: 120 }),
+  body('rectorCorreo').optional({ values: 'falsy' }).isEmail().withMessage('Correo del rector invalido'),
+  body('rectorTelefono').optional({ values: 'falsy' }).isString().isLength({ min: 7, max: 30 }),
+  body('rectorCedula').optional({ values: 'falsy' }).isString().isLength({ min: 5, max: 30 }),
+  body('rectorPassword').optional({ values: 'falsy' }).isString().isLength({ min: 4, max: 120 }).withMessage('Password del rector invalido')
 ];
 
 export const actualizarColegioRules = [
   param('id').isInt({ min: 1 }),
   body('nombre').optional().isString().notEmpty(),
-  body('codigoDane').optional({ values: 'falsy' }).isString().isLength({ min: 3, max: 30 })
+  body('codigoDane').optional({ values: 'falsy' }).isString().isLength({ min: 3, max: 30 }),
+  body('rectorNombre').optional({ values: 'falsy' }).isString().isLength({ min: 2, max: 120 }),
+  body('rectorApellido').optional({ values: 'falsy' }).isString().isLength({ min: 2, max: 120 }),
+  body('rectorCorreo').optional({ values: 'falsy' }).isEmail().withMessage('Correo del rector invalido'),
+  body('rectorTelefono').optional({ values: 'falsy' }).isString().isLength({ min: 7, max: 30 }),
+  body('rectorCedula').optional({ values: 'falsy' }).isString().isLength({ min: 5, max: 30 }),
+  body('rectorPassword').optional({ values: 'falsy' }).isString().isLength({ min: 4, max: 120 }).withMessage('Password del rector invalido')
 ];
 
 export const listarCursosColegioRules = [

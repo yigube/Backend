@@ -1,7 +1,7 @@
 ﻿// CRUD basico para cursos, estudiantes y periodos con scope por colegio.
 import { ForeignKeyConstraintError, Op, UniqueConstraintError } from 'sequelize';
 import bcrypt from 'bcrypt';
-import { Curso, Estudiante, Periodo, Usuario, CursoDocente, Colegio } from '../models/index.js';
+import { Curso, Estudiante, Periodo, Usuario, CursoDocente, Colegio, Rector } from '../models/index.js';
 
 const isDocente = (req) => req.user?.rol === 'docente';
 const canManageAcrossSchools = (req) => ['admin', 'rector', 'coordinador'].includes(req.user?.rol);
@@ -22,6 +22,50 @@ const normalizeCodigoDane = (value) => {
   if (!value) return null;
   const v = String(value).trim().toUpperCase();
   return v || null;
+};
+const normalizeOptionalText = (value) => {
+  if (value === undefined || value === null) return null;
+  const v = String(value).trim();
+  return v || null;
+};
+const buildColegioPayload = (body) => ({
+  nombre: normalizeOptionalText(body.nombre),
+  codigoDane: normalizeCodigoDane(body.codigoDane)
+});
+const buildRectorPayload = async (body) => {
+  const payload = {
+    nombre: normalizeOptionalText(body.rectorNombre),
+    apellido: normalizeOptionalText(body.rectorApellido),
+    correo: normalizeOptionalText(body.rectorCorreo)?.toLowerCase() || null,
+    telefono: normalizeOptionalText(body.rectorTelefono),
+    cedula: normalizeOptionalText(body.rectorCedula)
+  };
+  const plainPassword = normalizeOptionalText(body.rectorPassword);
+  if (plainPassword) {
+    payload.passwordHash = await bcrypt.hash(plainPassword, 10);
+  }
+  return payload;
+};
+const hasRectorProfileField = (body) => (
+  Object.prototype.hasOwnProperty.call(body, 'rectorNombre')
+  || Object.prototype.hasOwnProperty.call(body, 'rectorApellido')
+  || Object.prototype.hasOwnProperty.call(body, 'rectorCorreo')
+  || Object.prototype.hasOwnProperty.call(body, 'rectorTelefono')
+  || Object.prototype.hasOwnProperty.call(body, 'rectorCedula')
+);
+const hasRectorCredentialField = (body) => Object.prototype.hasOwnProperty.call(body, 'rectorPassword');
+const hasSomeRectorValue = (rectorPayload) => Object.values(rectorPayload).some((v) => Boolean(v));
+const serializeColegio = (colegio) => {
+  const raw = colegio.toJSON ? colegio.toJSON() : colegio;
+  const rector = raw.rector || null;
+  return {
+    ...raw,
+    rectorNombre: rector?.nombre ?? raw.rectorNombre ?? null,
+    rectorApellido: rector?.apellido ?? raw.rectorApellido ?? null,
+    rectorCorreo: rector?.correo ?? raw.rectorCorreo ?? null,
+    rectorTelefono: rector?.telefono ?? raw.rectorTelefono ?? null,
+    rectorCedula: rector?.cedula ?? raw.rectorCedula ?? null
+  };
 };
 
 /** Crea un curso asociado al colegio del usuario. Si es docente, queda asignado a el mismo. */
@@ -235,23 +279,42 @@ export async function seedCursoDocente(req, res){
 
 /** Lista todos los colegios (solo admin). */
 export async function listarColegios(req, res) {
-  const data = await Colegio.findAll({ attributes: ['id', 'nombre', 'codigoDane'] });
-  res.json(data);
+  const data = await Colegio.findAll({
+    attributes: ['id', 'nombre', 'codigoDane'],
+    include: [{
+      model: Rector,
+      as: 'rector',
+      attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula'],
+      required: false
+    }]
+  });
+  res.json(data.map(serializeColegio));
 }
 
 /** Crea un colegio (solo admin). */
 export async function crearColegio(req, res) {
-  const codigoDane = normalizeCodigoDane(req.body.codigoDane);
+  const colegioPayload = buildColegioPayload(req.body);
+  const rectorPayload = await buildRectorPayload(req.body);
+  const codigoDane = colegioPayload.codigoDane;
   if (codigoDane) {
     const exists = await Colegio.findOne({ where: { codigoDane } });
     if (exists) return res.status(409).json({ error: 'El codigo DANE ya existe' });
   }
   try {
-    const colegio = await Colegio.create({
-      nombre: req.body.nombre,
-      codigoDane
+    const colegio = await Colegio.create(colegioPayload);
+    if (hasSomeRectorValue(rectorPayload)) {
+      await Rector.create({ schoolId: colegio.id, ...rectorPayload });
+    }
+    const created = await Colegio.findByPk(colegio.id, {
+      attributes: ['id', 'nombre', 'codigoDane'],
+      include: [{
+        model: Rector,
+        as: 'rector',
+        attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula'],
+        required: false
+      }]
     });
-    return res.status(201).json(colegio);
+    return res.status(201).json(serializeColegio(created));
   } catch (e) {
     if (e instanceof UniqueConstraintError) {
       return res.status(409).json({ error: 'El codigo DANE ya existe' });
@@ -262,11 +325,15 @@ export async function crearColegio(req, res) {
 
 /** Actualiza nombre de un colegio (solo admin). */
 export async function actualizarColegio(req, res) {
-  const colegio = await Colegio.findByPk(req.params.id);
+  const colegio = await Colegio.findByPk(req.params.id, {
+    include: [{ model: Rector, as: 'rector', required: false }]
+  });
   if (!colegio) return res.status(404).json({ error: 'Colegio no encontrado' });
-  if (req.body.nombre) colegio.nombre = req.body.nombre;
+  const colegioPayload = buildColegioPayload(req.body);
+  const rectorPayload = await buildRectorPayload(req.body);
+  if (colegioPayload.nombre) colegio.nombre = colegioPayload.nombre;
   if (Object.prototype.hasOwnProperty.call(req.body, 'codigoDane')) {
-    const codigoDane = normalizeCodigoDane(req.body.codigoDane);
+    const codigoDane = colegioPayload.codigoDane;
     if (codigoDane) {
       const exists = await Colegio.findOne({ where: { codigoDane, id: { [Op.ne]: colegio.id } } });
       if (exists) return res.status(409).json({ error: 'El codigo DANE ya existe' });
@@ -275,7 +342,27 @@ export async function actualizarColegio(req, res) {
   }
   try {
     await colegio.save();
-    return res.json(colegio);
+    if (hasRectorProfileField(req.body) || hasRectorCredentialField(req.body)) {
+      const hasValue = hasSomeRectorValue(rectorPayload);
+      const canRemoveRector = hasRectorProfileField(req.body) && !hasRectorCredentialField(req.body);
+      if (colegio.rector && !hasValue && canRemoveRector) {
+        await colegio.rector.destroy();
+      } else if (colegio.rector && hasValue) {
+        await colegio.rector.update(rectorPayload);
+      } else if (!colegio.rector && hasValue) {
+        await Rector.create({ schoolId: colegio.id, ...rectorPayload });
+      }
+    }
+    const updated = await Colegio.findByPk(colegio.id, {
+      attributes: ['id', 'nombre', 'codigoDane'],
+      include: [{
+        model: Rector,
+        as: 'rector',
+        attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula'],
+        required: false
+      }]
+    });
+    return res.json(serializeColegio(updated));
   } catch (e) {
     if (e instanceof UniqueConstraintError) {
       return res.status(409).json({ error: 'El codigo DANE ya existe' });

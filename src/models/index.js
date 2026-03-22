@@ -5,8 +5,24 @@ import { sequelize } from '../config/database.js';
 export class Colegio extends Model {}
 Colegio.init({
   nombre: { type: DataTypes.STRING, allowNull: false },
-  codigoDane: { type: DataTypes.STRING, allowNull: true, unique: true }
+  codigoDane: { type: DataTypes.STRING, allowNull: true, unique: true },
+  rectorNombre: { type: DataTypes.STRING, allowNull: true },
+  rectorApellido: { type: DataTypes.STRING, allowNull: true },
+  rectorCorreo: { type: DataTypes.STRING, allowNull: true },
+  rectorTelefono: { type: DataTypes.STRING, allowNull: true },
+  rectorCedula: { type: DataTypes.STRING, allowNull: true }
 }, { sequelize, modelName: 'colegio' });
+
+export class Rector extends Model {}
+Rector.init({
+  schoolId: { type: DataTypes.INTEGER, allowNull: false, unique: true },
+  nombre: { type: DataTypes.STRING, allowNull: true },
+  apellido: { type: DataTypes.STRING, allowNull: true },
+  correo: { type: DataTypes.STRING, allowNull: true },
+  telefono: { type: DataTypes.STRING, allowNull: true },
+  cedula: { type: DataTypes.STRING, allowNull: true },
+  passwordHash: { type: DataTypes.STRING, allowNull: true }
+}, { sequelize, modelName: 'rector', tableName: 'rectores' });
 
 export class Usuario extends Model {}
 Usuario.init({
@@ -53,6 +69,8 @@ Asistencia.init({
 // Associations
 Colegio.hasMany(Usuario, { foreignKey: { allowNull: false, name: 'schoolId' } });
 Usuario.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
+Colegio.hasOne(Rector, { as: 'rector', foreignKey: { allowNull: false, name: 'schoolId' }, onDelete: 'CASCADE' });
+Rector.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' }, onDelete: 'CASCADE' });
 
 Colegio.hasMany(Curso, { foreignKey: { allowNull: false, name: 'schoolId' } });
 Curso.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
@@ -78,4 +96,4 @@ Asistencia.belongsTo(Periodo);
 Colegio.hasMany(Asistencia, { foreignKey: { allowNull: false, name: 'schoolId' } });
 Asistencia.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
 
-export default { Colegio, Usuario, Curso, CursoDocente, Estudiante, Periodo, Asistencia, sequelize };
+export default { Colegio, Rector, Usuario, Curso, CursoDocente, Estudiante, Periodo, Asistencia, sequelize };
