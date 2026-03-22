@@ -69,11 +69,11 @@ const serializeColegio = (colegio) => {
     ...raw,
     rector: rectorPublic,
     rectorTienePassword: Boolean(rector?.passwordHash),
-    rectorNombre: rector?.nombre ?? raw.rectorNombre ?? null,
-    rectorApellido: rector?.apellido ?? raw.rectorApellido ?? null,
-    rectorCorreo: rector?.correo ?? raw.rectorCorreo ?? null,
-    rectorTelefono: rector?.telefono ?? raw.rectorTelefono ?? null,
-    rectorCedula: rector?.cedula ?? raw.rectorCedula ?? null
+    rectorNombre: rector?.nombre ?? null,
+    rectorApellido: rector?.apellido ?? null,
+    rectorCorreo: rector?.correo ?? null,
+    rectorTelefono: rector?.telefono ?? null,
+    rectorCedula: rector?.cedula ?? null
   };
 };
 

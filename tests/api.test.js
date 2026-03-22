@@ -107,6 +107,20 @@ test('Login rector OK desde tabla rectores', async () => {
   expect(res.body.user.schoolId).toBe(school.id);
 });
 
+test('Login rector funciona aunque exista usuario con mismo correo y password distinto', async () => {
+  await Usuario.create({
+    nombre: 'Usuario Homonimo',
+    email: 'rector@demo.com',
+    passwordHash: await bcrypt.hash('otra-clave', 10),
+    rol: 'coordinador',
+    schoolId: school.id
+  });
+  const res = await request(app).post('/auth/login').send({ email: 'rector@demo.com', password: 'rector123' });
+  expect(res.status).toBe(200);
+  expect(res.body.user.rol).toBe('rector');
+  expect(res.body.user.schoolId).toBe(school.id);
+});
+
 test('Login falla con password incorrecto', async () => {
   const res = await request(app).post('/auth/login').send({ email: 'docente@demo.com', password: 'mala' });
   expect(res.status).toBe(401);

@@ -5,12 +5,7 @@ import { sequelize } from '../config/database.js';
 export class Colegio extends Model {}
 Colegio.init({
   nombre: { type: DataTypes.STRING, allowNull: false },
-  codigoDane: { type: DataTypes.STRING, allowNull: true, unique: true },
-  rectorNombre: { type: DataTypes.STRING, allowNull: true },
-  rectorApellido: { type: DataTypes.STRING, allowNull: true },
-  rectorCorreo: { type: DataTypes.STRING, allowNull: true },
-  rectorTelefono: { type: DataTypes.STRING, allowNull: true },
-  rectorCedula: { type: DataTypes.STRING, allowNull: true }
+  codigoDane: { type: DataTypes.STRING, allowNull: true, unique: true }
 }, { sequelize, modelName: 'colegio' });
 
 export class Rector extends Model {}
@@ -18,7 +13,7 @@ Rector.init({
   schoolId: { type: DataTypes.INTEGER, allowNull: false, unique: true },
   nombre: { type: DataTypes.STRING, allowNull: true },
   apellido: { type: DataTypes.STRING, allowNull: true },
-  correo: { type: DataTypes.STRING, allowNull: true },
+  correo: { type: DataTypes.STRING, allowNull: true, unique: true },
   telefono: { type: DataTypes.STRING, allowNull: true },
   cedula: { type: DataTypes.STRING, allowNull: true },
   passwordHash: { type: DataTypes.STRING, allowNull: true }
