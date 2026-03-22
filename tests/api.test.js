@@ -383,6 +383,20 @@ test('Admin no crea estudiante en curso de otro colegio', async () => {
   expect(res.body).toEqual({ error: 'Curso no encontrado' });
 });
 
+test('Docente puede agregar estudiantes de su colegio', async () => {
+  const res = await request(app)
+    .post('/estudiantes')
+    .set('Authorization', `Bearer ${teacherToken}`)
+    .send({
+      nombres: 'Nuevo',
+      apellidos: 'Estudiante',
+      qr: `QR-NUEVO-${Date.now()}`,
+      cursoId: curso.id
+    });
+  expect(res.status).toBe(201);
+  expect(res.body.cursoId).toBe(curso.id);
+});
+
 test('Registra asistencia por QR dentro de periodo activo', async () => {
   const res = await registrarAsistencia(teacherToken, {
     qr: studentA.qr,

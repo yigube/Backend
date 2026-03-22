@@ -35,7 +35,7 @@ router.get('/cursos', authRequired, asyncHandler(listarCursos));
 router.put('/cursos/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), actualizarCursoRules, handleValidation, asyncHandler(actualizarCurso));
 router.delete('/cursos/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(eliminarCurso));
 
-router.post('/estudiantes', authRequired, requireRole('admin'), crearEstudianteRules, handleValidation, asyncHandler(crearEstudiante));
+router.post('/estudiantes', authRequired, requireRole('admin', 'docente'), crearEstudianteRules, handleValidation, asyncHandler(crearEstudiante));
 router.get('/estudiantes', authRequired, asyncHandler(listarEstudiantes));
 router.get('/docentes', authRequired, asyncHandler(listarDocentes));
 router.get('/docentes/cursos-disponibles', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(listarCursosDisponiblesDocente));
