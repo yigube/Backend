@@ -6,7 +6,10 @@ import {
   crearCurso,
   listarCursos,
   crearEstudiante,
+  crearEstudiantesLote,
   listarEstudiantes,
+  actualizarEstudiante,
+  eliminarEstudiante,
   crearPeriodo,
   listarPeriodos,
   listarDocentes,
@@ -25,7 +28,7 @@ import {
   actualizarDocente,
   eliminarDocente
 } from '../controllers/crud.controller.js';
-import { crearCursoRules, actualizarCursoRules, crearEstudianteRules, crearPeriodoRules, actualizarPeriodoRules, crearColegioRules, actualizarColegioRules, listarCursosColegioRules, crearDocenteRules, actualizarDocenteRules } from '../middleware/validators.js';
+import { crearCursoRules, actualizarCursoRules, crearEstudianteRules, crearEstudiantesLoteRules, actualizarEstudianteRules, eliminarEstudianteRules, crearPeriodoRules, actualizarPeriodoRules, crearColegioRules, actualizarColegioRules, listarCursosColegioRules, crearDocenteRules, actualizarDocenteRules } from '../middleware/validators.js';
 import { handleValidation } from '../middleware/validationResult.js';
 import { asyncHandler } from '../middleware/errors.js';
 
@@ -36,7 +39,10 @@ router.put('/cursos/:id', authRequired, requireRole('admin', 'rector', 'coordina
 router.delete('/cursos/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(eliminarCurso));
 
 router.post('/estudiantes', authRequired, requireRole('admin', 'docente'), crearEstudianteRules, handleValidation, asyncHandler(crearEstudiante));
+router.post('/estudiantes/lote', authRequired, requireRole('admin', 'docente'), crearEstudiantesLoteRules, handleValidation, asyncHandler(crearEstudiantesLote));
 router.get('/estudiantes', authRequired, asyncHandler(listarEstudiantes));
+router.put('/estudiantes/:id', authRequired, requireRole('admin', 'docente'), actualizarEstudianteRules, handleValidation, asyncHandler(actualizarEstudiante));
+router.delete('/estudiantes/:id', authRequired, requireRole('admin', 'docente'), eliminarEstudianteRules, handleValidation, asyncHandler(eliminarEstudiante));
 router.get('/docentes', authRequired, asyncHandler(listarDocentes));
 router.get('/docentes/cursos-disponibles', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(listarCursosDisponiblesDocente));
 

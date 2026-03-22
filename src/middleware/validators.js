@@ -26,7 +26,28 @@ export const crearEstudianteRules = [
   body('nombres').isString().notEmpty(),
   body('apellidos').isString().notEmpty(),
   body('qr').isString().notEmpty().isLength({ max: 255 }),
+  body('codigoEstudiante').optional({ values: 'falsy' }).isString().isLength({ max: 100 }),
   body('cursoId').isInt({ min: 1 })
+];
+
+export const crearEstudiantesLoteRules = [
+  body('cursoId').isInt({ min: 1 }),
+  body('estudiantes').isArray({ min: 1 }),
+  body('estudiantes.*.nombres').isString().notEmpty(),
+  body('estudiantes.*.apellidos').isString().notEmpty(),
+  body('estudiantes.*.qr').isString().notEmpty().isLength({ max: 255 }),
+  body('estudiantes.*.codigoEstudiante').optional({ values: 'falsy' }).isString().isLength({ max: 100 })
+];
+export const actualizarEstudianteRules = [
+  param('id').isInt({ min: 1 }),
+  body('nombres').optional().isString().notEmpty(),
+  body('apellidos').optional().isString().notEmpty(),
+  body('qr').optional().isString().notEmpty().isLength({ max: 255 }),
+  body('codigoEstudiante').optional({ values: 'falsy' }).isString().isLength({ max: 100 }),
+  body('cursoId').optional().isInt({ min: 1 })
+];
+export const eliminarEstudianteRules = [
+  param('id').isInt({ min: 1 })
 ];
 export const crearPeriodoRules = [
   body('nombre').isString().notEmpty(),

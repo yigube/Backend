@@ -44,6 +44,7 @@ export class Estudiante extends Model {}
 Estudiante.init({
   nombres: { type: DataTypes.STRING, allowNull: false },
   apellidos: { type: DataTypes.STRING, allowNull: false },
+  codigoEstudiante: { type: DataTypes.STRING, allowNull: true, unique: true },
   qr: { type: DataTypes.STRING, allowNull: false, unique: true }
 }, { sequelize, modelName: 'estudiante' });
 

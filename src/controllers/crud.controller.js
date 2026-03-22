@@ -34,6 +34,8 @@ const mapUniqueConstraintMessage = (e) => {
   if (paths.some((p) => p.includes('correo'))) return 'El correo del rector ya existe';
   if (paths.some((p) => p.includes('cedula'))) return 'La cedula del rector ya existe';
   if (paths.some((p) => p.includes('telefono'))) return 'El telefono del rector ya existe';
+  if (paths.some((p) => p.includes('qr'))) return 'El codigo QR ya existe';
+  if (paths.some((p) => p.includes('codigo_estudiante') || p.includes('codigoestudiante'))) return 'El codigo del estudiante ya existe';
   return 'Ya existe un registro con uno de los datos unicos';
 };
 const buildColegioPayload = (body) => ({
@@ -192,8 +194,66 @@ export async function crearEstudiante(req, res){
   // Garantiza que el curso pertenece al mismo colegio del usuario.
   const curso = await Curso.findOne({ where: { id: req.body.cursoId, schoolId: req.user.schoolId } });
   if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
-  const obj = await Estudiante.create({ ...req.body });
-  res.status(201).json(obj);
+  try {
+    const obj = await Estudiante.create({
+      nombres: normalizeOptionalText(req.body.nombres),
+      apellidos: normalizeOptionalText(req.body.apellidos),
+      qr: normalizeOptionalText(req.body.qr),
+      codigoEstudiante: normalizeOptionalText(req.body.codigoEstudiante),
+      cursoId: req.body.cursoId
+    });
+    return res.status(201).json(obj);
+  } catch (e) {
+    if (e instanceof UniqueConstraintError) {
+      return res.status(409).json({ error: mapUniqueConstraintMessage(e) });
+    }
+    throw e;
+  }
+}
+
+/** Crea estudiantes en lote dentro del mismo curso/colegio. */
+export async function crearEstudiantesLote(req, res) {
+  const cursoId = Number(req.body.cursoId);
+  const rows = Array.isArray(req.body.estudiantes) ? req.body.estudiantes : [];
+  if (!Number.isInteger(cursoId) || cursoId <= 0) {
+    return res.status(400).json({ error: 'cursoId invalido' });
+  }
+  if (rows.length === 0) {
+    return res.status(400).json({ error: 'Debes enviar al menos un estudiante' });
+  }
+  const curso = await Curso.findOne({ where: { id: cursoId, schoolId: req.user.schoolId } });
+  if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
+
+  const payload = rows.map((item, idx) => ({
+    row: idx + 1,
+    nombres: normalizeOptionalText(item?.nombres),
+    apellidos: normalizeOptionalText(item?.apellidos),
+    qr: normalizeOptionalText(item?.qr),
+    codigoEstudiante: normalizeOptionalText(item?.codigoEstudiante),
+    cursoId
+  }));
+
+  const invalid = payload.find((item) => !item.nombres || !item.apellidos || !item.qr);
+  if (invalid) {
+    return res.status(400).json({ error: `Fila ${invalid.row}: nombres, apellidos y qr son requeridos` });
+  }
+
+  try {
+    const created = await Estudiante.bulkCreate(payload.map(({ row, ...rest }) => rest), { validate: true });
+    const createdRows = created.map((item) => ({
+      id: item.id,
+      nombres: item.nombres,
+      apellidos: item.apellidos,
+      qr: item.qr,
+      codigoEstudiante: item.codigoEstudiante
+    }));
+    return res.status(201).json({ created: created.length, students: createdRows });
+  } catch (e) {
+    if (e instanceof UniqueConstraintError) {
+      return res.status(409).json({ error: mapUniqueConstraintMessage(e) });
+    }
+    throw e;
+  }
 }
 
 /** Lista estudiantes del colegio mediante join con cursos. */
@@ -203,6 +263,60 @@ export async function listarEstudiantes(req, res){
     include: { model: Curso, where: { schoolId: req.user.schoolId }, attributes: [] }
   });
   res.json(ests);
+}
+
+/** Actualiza datos de un estudiante del colegio del usuario. */
+export async function actualizarEstudiante(req, res) {
+  const estudiante = await Estudiante.findOne({
+    where: { id: req.params.id },
+    include: [{ model: Curso, where: { schoolId: req.user.schoolId }, attributes: ['id', 'schoolId'] }]
+  });
+  if (!estudiante) return res.status(404).json({ error: 'Estudiante no encontrado' });
+
+  if (Object.prototype.hasOwnProperty.call(req.body, 'cursoId')) {
+    const nuevoCursoId = Number(req.body.cursoId);
+    if (!Number.isInteger(nuevoCursoId) || nuevoCursoId <= 0) {
+      return res.status(400).json({ error: 'cursoId invalido' });
+    }
+    const cursoDestino = await Curso.findOne({ where: { id: nuevoCursoId, schoolId: req.user.schoolId } });
+    if (!cursoDestino) return res.status(404).json({ error: 'Curso no encontrado' });
+    estudiante.cursoId = nuevoCursoId;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body, 'nombres')) {
+    estudiante.nombres = normalizeOptionalText(req.body.nombres);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'apellidos')) {
+    estudiante.apellidos = normalizeOptionalText(req.body.apellidos);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'qr')) {
+    estudiante.qr = normalizeOptionalText(req.body.qr);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'codigoEstudiante')) {
+    estudiante.codigoEstudiante = normalizeOptionalText(req.body.codigoEstudiante);
+  }
+
+  try {
+    await estudiante.save();
+    return res.json(estudiante);
+  } catch (e) {
+    if (e instanceof UniqueConstraintError) {
+      return res.status(409).json({ error: mapUniqueConstraintMessage(e) });
+    }
+    throw e;
+  }
+}
+
+/** Elimina un estudiante del colegio del usuario. */
+export async function eliminarEstudiante(req, res) {
+  const estudiante = await Estudiante.findOne({
+    where: { id: req.params.id },
+    include: [{ model: Curso, where: { schoolId: req.user.schoolId }, attributes: ['id'] }]
+  });
+  if (!estudiante) return res.status(404).json({ error: 'Estudiante no encontrado' });
+
+  await estudiante.destroy();
+  return res.json({ ok: true });
 }
 
 /** Lista docentes de un colegio (admin puede filtrar por schoolId). */
