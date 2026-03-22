@@ -59,7 +59,7 @@ Asistencia.init({
   fecha: { type: DataTypes.DATEONLY, allowNull: false },
   presente: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   schoolId: { type: DataTypes.INTEGER, allowNull: false }
-}, { sequelize, modelName: 'asistencia', indexes: [{ unique: true, fields: ['fecha','estudiante_id','curso_id','school_id'] }] });
+}, { sequelize, modelName: 'asistencia', tableName: 'asistencias', indexes: [{ unique: true, fields: ['fecha','estudiante_id','curso_id','school_id'] }] });
 
 // Associations
 Colegio.hasMany(Usuario, { foreignKey: { allowNull: false, name: 'schoolId' } });

@@ -3,6 +3,13 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface) {
+    const hasUnique = async (name) => {
+      const [rows] = await queryInterface.sequelize.query(`
+        SHOW INDEX FROM rectores WHERE Key_name = '${name}'
+      `);
+      return Array.isArray(rows) && rows.length > 0;
+    };
+
     const table = await queryInterface.describeTable('rectores');
     const normalizeColumns = ['correo', 'cedula', 'telefono'];
 
@@ -35,11 +42,13 @@ module.exports = {
       if (Array.isArray(duplicates) && duplicates.length > 0) {
         throw new Error(`No se puede crear unique en rectores.${column}: hay valores duplicados`);
       }
-      await queryInterface.addConstraint('rectores', {
-        fields: [column],
-        type: 'unique',
-        name: constraintName
-      });
+      if (!(await hasUnique(constraintName))) {
+        await queryInterface.addConstraint('rectores', {
+          fields: [column],
+          type: 'unique',
+          name: constraintName
+        });
+      }
     };
 
     await addUniqueIfNoDuplicates('correo', 'rectores_correo_unique');
@@ -58,4 +67,3 @@ module.exports = {
     }
   },
 };
-

@@ -3,6 +3,13 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
+    const hasUnique = async (name) => {
+      const [rows] = await queryInterface.sequelize.query(`
+        SHOW INDEX FROM rectores WHERE Key_name = '${name}'
+      `);
+      return Array.isArray(rows) && rows.length > 0;
+    };
+
     const table = await queryInterface.describeTable('rectores');
     if (table.correo) {
       // Normaliza correo para evitar duplicados por mayusculas/espacios.
@@ -24,11 +31,13 @@ module.exports = {
         throw new Error(`No se puede aplicar unique en rectores.correo: hay correos duplicados (${duplicates.map((d) => d.correo).join(', ')})`);
       }
 
-      await queryInterface.addConstraint('rectores', {
-        fields: ['correo'],
-        type: 'unique',
-        name: 'rectores_correo_unique'
-      });
+      if (!(await hasUnique('rectores_correo_unique'))) {
+        await queryInterface.addConstraint('rectores', {
+          fields: ['correo'],
+          type: 'unique',
+          name: 'rectores_correo_unique'
+        });
+      }
     }
 
     const colegios = await queryInterface.describeTable('colegios');
@@ -64,4 +73,3 @@ module.exports = {
     }
   },
 };
-
