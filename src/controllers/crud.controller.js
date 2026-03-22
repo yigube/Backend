@@ -4,7 +4,7 @@ import bcrypt from 'bcrypt';
 import { Curso, Estudiante, Periodo, Usuario, CursoDocente, Colegio, Rector } from '../models/index.js';
 
 const isDocente = (req) => req.user?.rol === 'docente';
-const canManageAcrossSchools = (req) => ['admin', 'rector', 'coordinador'].includes(req.user?.rol);
+const canManageAcrossSchools = (req) => req.user?.rol === 'admin';
 const normalizedSchoolId = (value) => {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -58,8 +58,17 @@ const hasSomeRectorValue = (rectorPayload) => Object.values(rectorPayload).some(
 const serializeColegio = (colegio) => {
   const raw = colegio.toJSON ? colegio.toJSON() : colegio;
   const rector = raw.rector || null;
+  const rectorPublic = rector ? {
+    nombre: rector.nombre ?? null,
+    apellido: rector.apellido ?? null,
+    correo: rector.correo ?? null,
+    telefono: rector.telefono ?? null,
+    cedula: rector.cedula ?? null
+  } : null;
   return {
     ...raw,
+    rector: rectorPublic,
+    rectorTienePassword: Boolean(rector?.passwordHash),
     rectorNombre: rector?.nombre ?? raw.rectorNombre ?? null,
     rectorApellido: rector?.apellido ?? raw.rectorApellido ?? null,
     rectorCorreo: rector?.correo ?? raw.rectorCorreo ?? null,
@@ -279,12 +288,16 @@ export async function seedCursoDocente(req, res){
 
 /** Lista todos los colegios (solo admin). */
 export async function listarColegios(req, res) {
+  const where = req.user?.rol === 'admin'
+    ? {}
+    : { id: req.user?.schoolId };
   const data = await Colegio.findAll({
+    where,
     attributes: ['id', 'nombre', 'codigoDane'],
     include: [{
       model: Rector,
       as: 'rector',
-      attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula'],
+      attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula', 'passwordHash'],
       required: false
     }]
   });
@@ -310,7 +323,7 @@ export async function crearColegio(req, res) {
       include: [{
         model: Rector,
         as: 'rector',
-        attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula'],
+        attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula', 'passwordHash'],
         required: false
       }]
     });
@@ -358,7 +371,7 @@ export async function actualizarColegio(req, res) {
       include: [{
         model: Rector,
         as: 'rector',
-        attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula'],
+        attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula', 'passwordHash'],
         required: false
       }]
     });

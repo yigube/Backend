@@ -40,10 +40,10 @@ router.get('/estudiantes', authRequired, asyncHandler(listarEstudiantes));
 router.get('/docentes', authRequired, asyncHandler(listarDocentes));
 router.get('/docentes/cursos-disponibles', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(listarCursosDisponiblesDocente));
 
-router.post('/periodos', authRequired, requireRole('admin'), crearPeriodoRules, handleValidation, asyncHandler(crearPeriodo));
+router.post('/periodos', authRequired, requireRole('admin', 'rector', 'coordinador'), crearPeriodoRules, handleValidation, asyncHandler(crearPeriodo));
 router.get('/periodos', authRequired, asyncHandler(listarPeriodos));
-router.put('/periodos/:id', authRequired, requireRole('admin'), actualizarPeriodoRules, handleValidation, asyncHandler(actualizarPeriodo));
-router.delete('/periodos/:id', authRequired, requireRole('admin'), asyncHandler(eliminarPeriodo));
+router.put('/periodos/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), actualizarPeriodoRules, handleValidation, asyncHandler(actualizarPeriodo));
+router.delete('/periodos/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(eliminarPeriodo));
 
 router.post('/curso-docentes/seed', authRequired, requireRole('admin'), asyncHandler(seedCursoDocente));
 router.get('/colegios', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(listarColegios));

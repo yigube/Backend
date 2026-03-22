@@ -3,7 +3,7 @@ import request from 'supertest';
 import bcrypt from 'bcrypt';
 import { init } from '../src/app.js';
 import { sequelize } from '../src/config/database.js';
-import { Usuario, Colegio, Curso, Estudiante, Periodo } from '../src/models/index.js';
+import { Usuario, Colegio, Curso, Estudiante, Periodo, Rector } from '../src/models/index.js';
 import { resetLoginRateLimitBuckets } from '../src/middleware/rateLimit.js';
 
 let app;
@@ -69,6 +69,13 @@ beforeEach(async () => {
     rol: 'admin',
     schoolId: otherSchool.id
   });
+  await Rector.create({
+    schoolId: school.id,
+    nombre: 'Rector',
+    apellido: 'Demo',
+    correo: 'rector@demo.com',
+    passwordHash: await bcrypt.hash('rector123', 10)
+  });
 
   curso = await Curso.create({ nombre: 'Matematicas', schoolId: school.id });
   otroCurso = await Curso.create({ nombre: 'Historia', schoolId: otherSchool.id });
@@ -90,6 +97,14 @@ test('Login OK', async () => {
   const res = await request(app).post('/auth/login').send({ email: 'docente@demo.com', password: 'doc123' });
   expect(res.status).toBe(200);
   expect(res.body.token).toBeTruthy();
+});
+
+test('Login rector OK desde tabla rectores', async () => {
+  const res = await request(app).post('/auth/login').send({ email: 'rector@demo.com', password: 'rector123' });
+  expect(res.status).toBe(200);
+  expect(res.body.token).toBeTruthy();
+  expect(res.body.user.rol).toBe('rector');
+  expect(res.body.user.schoolId).toBe(school.id);
 });
 
 test('Login falla con password incorrecto', async () => {
@@ -182,26 +197,33 @@ test('Admin lista cursos disponibles para asignar docentes por colegio', async (
   expect(other.body[0].schoolId).toBe(otherSchool.id);
 });
 
-test('Coordinador puede consultar cursos disponibles y crear docente en otro colegio', async () => {
+test('Coordinador solo gestiona su colegio y puede activar periodos propios', async () => {
   const listSchools = await request(app)
     .get('/colegios')
     .set('Authorization', `Bearer ${coordinadorToken}`);
   expect(listSchools.status).toBe(200);
-  expect(listSchools.body.length).toBeGreaterThanOrEqual(2);
+  expect(listSchools.body.length).toBe(1);
+  expect(listSchools.body[0].id).toBe(school.id);
+
+  const cursosOwn = await request(app)
+    .get('/docentes/cursos-disponibles')
+    .set('Authorization', `Bearer ${coordinadorToken}`);
+  expect(cursosOwn.status).toBe(200);
+  expect(cursosOwn.body.map((c) => c.id)).toEqual([curso.id]);
 
   const cursosOther = await request(app)
     .get(`/docentes/cursos-disponibles?schoolId=${otherSchool.id}`)
     .set('Authorization', `Bearer ${coordinadorToken}`);
   expect(cursosOther.status).toBe(200);
-  expect(cursosOther.body.map((c) => c.id)).toEqual([otroCurso.id]);
+  expect(cursosOther.body.map((c) => c.id)).toEqual([curso.id]);
 
   const cursosPorColegio = await request(app)
     .get(`/colegios/${otherSchool.id}/cursos`)
     .set('Authorization', `Bearer ${coordinadorToken}`);
-  expect(cursosPorColegio.status).toBe(200);
-  expect(cursosPorColegio.body.map((c) => c.id)).toEqual([otroCurso.id]);
+  expect(cursosPorColegio.status).toBe(403);
+  expect(cursosPorColegio.body).toEqual({ error: 'No autorizado' });
 
-  const createInOther = await request(app)
+  const createDocente = await request(app)
     .post('/docentes')
     .set('Authorization', `Bearer ${coordinadorToken}`)
     .send({
@@ -209,11 +231,18 @@ test('Coordinador puede consultar cursos disponibles y crear docente en otro col
       email: 'docente.coord@demo.com',
       password: 'doc1234',
       schoolId: otherSchool.id,
-      cursoIds: [otroCurso.id]
+      cursoIds: [curso.id]
     });
-  expect(createInOther.status).toBe(201);
-  expect(createInOther.body.schoolId).toBe(otherSchool.id);
-  expect(createInOther.body.cursos.map((c) => c.id)).toEqual([otroCurso.id]);
+  expect(createDocente.status).toBe(201);
+  expect(createDocente.body.schoolId).toBe(school.id);
+  expect(createDocente.body.cursos.map((c) => c.id)).toEqual([curso.id]);
+
+  const createPeriodo = await request(app)
+    .post('/periodos')
+    .set('Authorization', `Bearer ${coordinadorToken}`)
+    .send({ nombre: 'P2', fechaInicio: '2025-02-01', fechaFin: '2025-02-28', schoolId: otherSchool.id });
+  expect(createPeriodo.status).toBe(201);
+  expect(createPeriodo.body.schoolId).toBe(school.id);
 });
 
 test('Admin crea docente y asigna cursos del colegio seleccionado', async () => {
