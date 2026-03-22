@@ -43,8 +43,9 @@ export async function login(req, res) {
 
   const colegio = await Colegio.findOne({ where: { id: rector.schoolId } });
   const nombreRector = [rector.nombre, rector.apellido].filter(Boolean).join(' ').trim() || 'Rector';
+  const rolDirectivo = rector.cargo === 'coordinador' ? 'coordinador' : 'rector';
   const token = jwt.sign(
-    { id: `rector-${rector.id}`, rol: 'rector', nombre: nombreRector, schoolId: rector.schoolId, schoolName: colegio?.nombre },
+    { id: `rector-${rector.id}`, rol: rolDirectivo, nombre: nombreRector, schoolId: rector.schoolId, schoolName: colegio?.nombre },
     process.env.JWT_SECRET,
     { expiresIn: '8h' }
   );
@@ -55,7 +56,7 @@ export async function login(req, res) {
       id: `rector-${rector.id}`,
       nombre: nombreRector,
       email: rector.correo,
-      rol: 'rector',
+      rol: rolDirectivo,
       schoolId: rector.schoolId,
       schoolName: colegio?.nombre || ''
     }

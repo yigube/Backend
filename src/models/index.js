@@ -11,6 +11,7 @@ Colegio.init({
 export class Rector extends Model {}
 Rector.init({
   schoolId: { type: DataTypes.INTEGER, allowNull: false, unique: true },
+  cargo: { type: DataTypes.ENUM('rector', 'coordinador'), allowNull: false, defaultValue: 'rector' },
   nombre: { type: DataTypes.STRING, allowNull: true },
   apellido: { type: DataTypes.STRING, allowNull: true },
   correo: { type: DataTypes.STRING, allowNull: true, unique: true },

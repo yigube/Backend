@@ -41,6 +41,7 @@ const buildColegioPayload = (body) => ({
   codigoDane: normalizeCodigoDane(body.codigoDane)
 });
 const buildRectorPayload = async (body) => {
+  const cargo = normalizeOptionalText(body.rectorCargo)?.toLowerCase();
   const payload = {
     nombre: normalizeOptionalText(body.rectorNombre),
     apellido: normalizeOptionalText(body.rectorApellido),
@@ -48,6 +49,9 @@ const buildRectorPayload = async (body) => {
     telefono: normalizeOptionalText(body.rectorTelefono),
     cedula: normalizeOptionalText(body.rectorCedula)
   };
+  if (cargo === 'rector' || cargo === 'coordinador') {
+    payload.cargo = cargo;
+  }
   const plainPassword = normalizeOptionalText(body.rectorPassword);
   if (plainPassword) {
     payload.passwordHash = await bcrypt.hash(plainPassword, 10);
@@ -56,17 +60,27 @@ const buildRectorPayload = async (body) => {
 };
 const hasRectorProfileField = (body) => (
   Object.prototype.hasOwnProperty.call(body, 'rectorNombre')
+  || Object.prototype.hasOwnProperty.call(body, 'rectorCargo')
   || Object.prototype.hasOwnProperty.call(body, 'rectorApellido')
   || Object.prototype.hasOwnProperty.call(body, 'rectorCorreo')
   || Object.prototype.hasOwnProperty.call(body, 'rectorTelefono')
   || Object.prototype.hasOwnProperty.call(body, 'rectorCedula')
 );
 const hasRectorCredentialField = (body) => Object.prototype.hasOwnProperty.call(body, 'rectorPassword');
-const hasSomeRectorValue = (rectorPayload) => Object.values(rectorPayload).some((v) => Boolean(v));
+const hasSomeRectorValue = (rectorPayload) => (
+  Boolean(rectorPayload.cargo)
+  || Boolean(rectorPayload.nombre)
+  || Boolean(rectorPayload.apellido)
+  || Boolean(rectorPayload.correo)
+  || Boolean(rectorPayload.telefono)
+  || Boolean(rectorPayload.cedula)
+  || Boolean(rectorPayload.passwordHash)
+);
 const serializeColegio = (colegio) => {
   const raw = colegio.toJSON ? colegio.toJSON() : colegio;
   const rector = raw.rector || null;
   const rectorPublic = rector ? {
+    cargo: rector.cargo ?? null,
     nombre: rector.nombre ?? null,
     apellido: rector.apellido ?? null,
     correo: rector.correo ?? null,
@@ -77,6 +91,7 @@ const serializeColegio = (colegio) => {
     ...raw,
     rector: rectorPublic,
     rectorTienePassword: Boolean(rector?.passwordHash),
+    rectorCargo: rector?.cargo ?? 'rector',
     rectorNombre: rector?.nombre ?? null,
     rectorApellido: rector?.apellido ?? null,
     rectorCorreo: rector?.correo ?? null,
@@ -305,7 +320,7 @@ export async function listarColegios(req, res) {
     include: [{
       model: Rector,
       as: 'rector',
-      attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula', 'passwordHash'],
+      attributes: ['cargo', 'nombre', 'apellido', 'correo', 'telefono', 'cedula', 'passwordHash'],
       required: false
     }]
   });
@@ -331,7 +346,7 @@ export async function crearColegio(req, res) {
       include: [{
         model: Rector,
         as: 'rector',
-        attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula', 'passwordHash'],
+        attributes: ['cargo', 'nombre', 'apellido', 'correo', 'telefono', 'cedula', 'passwordHash'],
         required: false
       }]
     });
@@ -379,7 +394,7 @@ export async function actualizarColegio(req, res) {
       include: [{
         model: Rector,
         as: 'rector',
-        attributes: ['nombre', 'apellido', 'correo', 'telefono', 'cedula', 'passwordHash'],
+        attributes: ['cargo', 'nombre', 'apellido', 'correo', 'telefono', 'cedula', 'passwordHash'],
         required: false
       }]
     });

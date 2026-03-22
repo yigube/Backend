@@ -121,6 +121,21 @@ test('Login rector funciona aunque exista usuario con mismo correo y password di
   expect(res.body.user.schoolId).toBe(school.id);
 });
 
+test('Login directivo con cargo coordinador retorna rol coordinador', async () => {
+  await Rector.create({
+    schoolId: otherSchool.id,
+    cargo: 'coordinador',
+    nombre: 'Coordinador',
+    apellido: 'Demo',
+    correo: 'coordinador.rector@demo.com',
+    passwordHash: await bcrypt.hash('coord1234', 10)
+  });
+  const res = await request(app).post('/auth/login').send({ email: 'coordinador.rector@demo.com', password: 'coord1234' });
+  expect(res.status).toBe(200);
+  expect(res.body.user.rol).toBe('coordinador');
+  expect(res.body.user.schoolId).toBe(otherSchool.id);
+});
+
 test('Login falla con password incorrecto', async () => {
   const res = await request(app).post('/auth/login').send({ email: 'docente@demo.com', password: 'mala' });
   expect(res.status).toBe(401);
