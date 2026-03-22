@@ -28,6 +28,14 @@ const normalizeOptionalText = (value) => {
   const v = String(value).trim();
   return v || null;
 };
+const mapUniqueConstraintMessage = (e) => {
+  const paths = Array.isArray(e?.errors) ? e.errors.map((err) => String(err.path || '').toLowerCase()) : [];
+  if (paths.some((p) => p.includes('codigo') || p.includes('dane'))) return 'El codigo DANE ya existe';
+  if (paths.some((p) => p.includes('correo'))) return 'El correo del rector ya existe';
+  if (paths.some((p) => p.includes('cedula'))) return 'La cedula del rector ya existe';
+  if (paths.some((p) => p.includes('telefono'))) return 'El telefono del rector ya existe';
+  return 'Ya existe un registro con uno de los datos unicos';
+};
 const buildColegioPayload = (body) => ({
   nombre: normalizeOptionalText(body.nombre),
   codigoDane: normalizeCodigoDane(body.codigoDane)
@@ -330,7 +338,7 @@ export async function crearColegio(req, res) {
     return res.status(201).json(serializeColegio(created));
   } catch (e) {
     if (e instanceof UniqueConstraintError) {
-      return res.status(409).json({ error: 'El codigo DANE ya existe' });
+      return res.status(409).json({ error: mapUniqueConstraintMessage(e) });
     }
     throw e;
   }
@@ -378,7 +386,7 @@ export async function actualizarColegio(req, res) {
     return res.json(serializeColegio(updated));
   } catch (e) {
     if (e instanceof UniqueConstraintError) {
-      return res.status(409).json({ error: 'El codigo DANE ya existe' });
+      return res.status(409).json({ error: mapUniqueConstraintMessage(e) });
     }
     throw e;
   }

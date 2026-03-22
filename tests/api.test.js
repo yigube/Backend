@@ -296,6 +296,69 @@ test('Admin no puede crear docente con cursos de otro colegio', async () => {
   expect(notCreated).toBeNull();
 });
 
+test('Admin valida unicidad de correo, cedula y telefono del rector', async () => {
+  const base = {
+    rectorNombre: 'Rector',
+    rectorApellido: 'Uno',
+    rectorPassword: 'rector1234'
+  };
+
+  const createFirst = await request(app)
+    .post('/colegios')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Colegio Unico 1',
+      codigoDane: 'DANE-UNICO-1',
+      rectorCorreo: 'rector.unico@demo.com',
+      rectorCedula: '123456789',
+      rectorTelefono: '3001112233',
+      ...base
+    });
+  expect(createFirst.status).toBe(201);
+
+  const dupCorreo = await request(app)
+    .post('/colegios')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Colegio Unico 2',
+      codigoDane: 'DANE-UNICO-2',
+      rectorCorreo: 'rector.unico@demo.com',
+      rectorCedula: '987654321',
+      rectorTelefono: '3004445566',
+      ...base
+    });
+  expect(dupCorreo.status).toBe(409);
+  expect(dupCorreo.body.error).toContain('correo');
+
+  const dupCedula = await request(app)
+    .post('/colegios')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Colegio Unico 3',
+      codigoDane: 'DANE-UNICO-3',
+      rectorCorreo: 'rector.unico.3@demo.com',
+      rectorCedula: '123456789',
+      rectorTelefono: '3007778899',
+      ...base
+    });
+  expect(dupCedula.status).toBe(409);
+  expect(dupCedula.body.error).toContain('cedula');
+
+  const dupTelefono = await request(app)
+    .post('/colegios')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Colegio Unico 4',
+      codigoDane: 'DANE-UNICO-4',
+      rectorCorreo: 'rector.unico.4@demo.com',
+      rectorCedula: '456123789',
+      rectorTelefono: '3001112233',
+      ...base
+    });
+  expect(dupTelefono.status).toBe(409);
+  expect(dupTelefono.body.error).toContain('telefono');
+});
+
 test('Admin no crea estudiante en curso de otro colegio', async () => {
   const res = await request(app)
     .post('/estudiantes')

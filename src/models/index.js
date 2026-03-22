@@ -14,8 +14,8 @@ Rector.init({
   nombre: { type: DataTypes.STRING, allowNull: true },
   apellido: { type: DataTypes.STRING, allowNull: true },
   correo: { type: DataTypes.STRING, allowNull: true, unique: true },
-  telefono: { type: DataTypes.STRING, allowNull: true },
-  cedula: { type: DataTypes.STRING, allowNull: true },
+  telefono: { type: DataTypes.STRING, allowNull: true, unique: true },
+  cedula: { type: DataTypes.STRING, allowNull: true, unique: true },
   passwordHash: { type: DataTypes.STRING, allowNull: true }
 }, { sequelize, modelName: 'rector', tableName: 'rectores' });
 
