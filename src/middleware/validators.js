@@ -9,8 +9,12 @@ export const loginRules = [
 export const qrRules = [
   body('qr').isString().notEmpty(),
   body('cursoId').isInt({ min: 1 }),
-  body('fecha').isISO8601().toDate(),
-  body('presente').optional().isBoolean()
+  body('fecha').isISO8601(),
+  body('presente').optional().isBoolean(),
+  body('tarde').optional().isBoolean(),
+  body('afuera').optional().isBoolean(),
+  body('ausente').optional().isBoolean(),
+  body('estado').optional().isIn(['presente', 'tarde', 'afuera', 'ausente'])
 ];
 
 export const crearCursoRules = [

@@ -59,7 +59,11 @@ Periodo.init({
 export class Asistencia extends Model {}
 Asistencia.init({
   fecha: { type: DataTypes.DATEONLY, allowNull: false },
+  estado: { type: DataTypes.STRING, allowNull: false, defaultValue: 'presente' },
   presente: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+  tarde: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  afuera: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  ausente: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   schoolId: { type: DataTypes.INTEGER, allowNull: false }
 }, { sequelize, modelName: 'asistencia', tableName: 'asistencias', indexes: [{ unique: true, fields: ['fecha','estudiante_id','curso_id','school_id'] }] });
 
