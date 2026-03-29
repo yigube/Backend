@@ -7,7 +7,10 @@ export function authRequired(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Token requerido' });
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    if (!payload.schoolId) return res.status(401).json({ error: 'Token invalido' });
+    const requiresSchoolScope = payload?.rol !== 'admin';
+    if (!payload?.id || !payload?.rol || (requiresSchoolScope && !payload?.schoolId)) {
+      return res.status(401).json({ error: 'Token invalido' });
+    }
     req.user = payload;
     next();
   } catch (e) {

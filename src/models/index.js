@@ -26,7 +26,7 @@ Usuario.init({
   email: { type: DataTypes.STRING, allowNull: false, unique: true },
   passwordHash: { type: DataTypes.STRING, allowNull: false },
   rol: { type: DataTypes.ENUM('docente', 'admin', 'rector', 'coordinador'), allowNull: false, defaultValue: 'docente' },
-  schoolId: { type: DataTypes.INTEGER, allowNull: false }
+  schoolId: { type: DataTypes.INTEGER, allowNull: true }
 }, { sequelize, modelName: 'usuario' });
 
 export class Curso extends Model {}
@@ -39,6 +39,27 @@ export class CursoDocente extends Model {}
 CursoDocente.init({
   schoolId: { type: DataTypes.INTEGER, allowNull: false }
 }, { sequelize, modelName: 'curso_docente' });
+
+export class Materia extends Model {}
+Materia.init({
+  nombre: { type: DataTypes.STRING, allowNull: false },
+  schoolId: { type: DataTypes.INTEGER, allowNull: false }
+}, {
+  sequelize,
+  modelName: 'materia',
+  tableName: 'materias',
+  indexes: [{ unique: true, fields: ['school_id', 'nombre'] }]
+});
+
+export class DocenteCursoMateria extends Model {}
+DocenteCursoMateria.init({
+  schoolId: { type: DataTypes.INTEGER, allowNull: false }
+}, {
+  sequelize,
+  modelName: 'docente_curso_materia',
+  tableName: 'docente_curso_materias',
+  indexes: [{ unique: true, fields: ['usuario_id', 'curso_id', 'materia_id', 'school_id'] }]
+});
 
 export class Estudiante extends Model {}
 Estudiante.init({
@@ -68,8 +89,8 @@ Asistencia.init({
 }, { sequelize, modelName: 'asistencia', tableName: 'asistencias', indexes: [{ unique: true, fields: ['fecha','estudiante_id','curso_id','school_id'] }] });
 
 // Associations
-Colegio.hasMany(Usuario, { foreignKey: { allowNull: false, name: 'schoolId' } });
-Usuario.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
+Colegio.hasMany(Usuario, { foreignKey: { allowNull: true, name: 'schoolId' } });
+Usuario.belongsTo(Colegio, { foreignKey: { allowNull: true, name: 'schoolId' } });
 Colegio.hasOne(Rector, { as: 'rector', foreignKey: { allowNull: false, name: 'schoolId' }, onDelete: 'CASCADE' });
 Rector.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' }, onDelete: 'CASCADE' });
 
@@ -78,6 +99,43 @@ Curso.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } })
 
 Curso.belongsToMany(Usuario, { through: CursoDocente, as: 'docentes' });
 Usuario.belongsToMany(Curso, { through: CursoDocente, as: 'cursos' });
+
+Colegio.hasMany(Materia, { foreignKey: { allowNull: false, name: 'schoolId' } });
+Materia.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
+
+Curso.belongsToMany(Materia, {
+  through: DocenteCursoMateria,
+  as: 'materias',
+  foreignKey: 'cursoId',
+  otherKey: 'materiaId'
+});
+Materia.belongsToMany(Curso, {
+  through: DocenteCursoMateria,
+  as: 'cursos',
+  foreignKey: 'materiaId',
+  otherKey: 'cursoId'
+});
+Usuario.belongsToMany(Materia, {
+  through: DocenteCursoMateria,
+  as: 'materias',
+  foreignKey: 'usuarioId',
+  otherKey: 'materiaId'
+});
+Materia.belongsToMany(Usuario, {
+  through: DocenteCursoMateria,
+  as: 'docentes',
+  foreignKey: 'materiaId',
+  otherKey: 'usuarioId'
+});
+
+Curso.hasMany(DocenteCursoMateria, { foreignKey: { allowNull: false, name: 'cursoId' } });
+Usuario.hasMany(DocenteCursoMateria, { foreignKey: { allowNull: false, name: 'usuarioId' } });
+Materia.hasMany(DocenteCursoMateria, { foreignKey: { allowNull: false, name: 'materiaId' } });
+Colegio.hasMany(DocenteCursoMateria, { foreignKey: { allowNull: false, name: 'schoolId' } });
+DocenteCursoMateria.belongsTo(Curso, { foreignKey: { allowNull: false, name: 'cursoId' } });
+DocenteCursoMateria.belongsTo(Usuario, { foreignKey: { allowNull: false, name: 'usuarioId' } });
+DocenteCursoMateria.belongsTo(Materia, { as: 'materia', foreignKey: { allowNull: false, name: 'materiaId' } });
+DocenteCursoMateria.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
 
 Colegio.hasMany(Periodo, { foreignKey: { allowNull: false, name: 'schoolId' } });
 Periodo.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
@@ -97,4 +155,16 @@ Asistencia.belongsTo(Periodo);
 Colegio.hasMany(Asistencia, { foreignKey: { allowNull: false, name: 'schoolId' } });
 Asistencia.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
 
-export default { Colegio, Rector, Usuario, Curso, CursoDocente, Estudiante, Periodo, Asistencia, sequelize };
+export default {
+  Colegio,
+  Rector,
+  Usuario,
+  Curso,
+  CursoDocente,
+  Materia,
+  DocenteCursoMateria,
+  Estudiante,
+  Periodo,
+  Asistencia,
+  sequelize
+};

@@ -1,6 +1,29 @@
 ﻿// Reglas de validacion para rutas REST.
 import { body, query, param } from 'express-validator';
 
+const materiasPorCursoValidator = (value) => {
+  if (value === undefined) return true;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('materiasPorCurso debe ser un objeto');
+  }
+
+  for (const [cursoId, materias] of Object.entries(value)) {
+    const cursoIdNum = Number(cursoId);
+    if (!Number.isInteger(cursoIdNum) || cursoIdNum <= 0) {
+      throw new Error('materiasPorCurso contiene un cursoId invalido');
+    }
+    const isString = typeof materias === 'string';
+    const isArray = Array.isArray(materias);
+    if (!isString && !isArray) {
+      throw new Error('Cada valor de materiasPorCurso debe ser texto o arreglo de textos');
+    }
+    if (isArray && materias.some((item) => typeof item !== 'string')) {
+      throw new Error('El arreglo de materias debe contener solo textos');
+    }
+  }
+  return true;
+};
+
 export const loginRules = [
   body('email').isEmail().withMessage('Email invalido'),
   body('password').isString().isLength({ min: 4 }).withMessage('Password invalido')
@@ -72,29 +95,72 @@ export const resumenRules = [
   query('totalClases').optional().isInt({ min: 0 })
 ];
 
+export const ausentesRules = [
+  query('cursoId').isInt({ min: 1 }),
+  query('fecha').optional().isISO8601()
+];
+
+const codigoDaneRule = body('codigoDane')
+  .optional({ values: 'falsy' })
+  .isString().withMessage('Codigo DANE invalido')
+  .isLength({ min: 3, max: 30 }).withMessage('Codigo DANE invalido');
+
+const rectorNombreRule = body('rectorNombre')
+  .optional({ values: 'falsy' })
+  .isString().withMessage('Nombre del rector invalido')
+  .isLength({ min: 2, max: 120 }).withMessage('Nombre del rector invalido');
+
+const rectorApellidoRule = body('rectorApellido')
+  .optional({ values: 'falsy' })
+  .isString().withMessage('Apellido del rector invalido')
+  .isLength({ min: 2, max: 120 }).withMessage('Apellido del rector invalido');
+
+const rectorCargoRule = body('rectorCargo')
+  .optional({ values: 'falsy' })
+  .isIn(['rector', 'coordinador']).withMessage('Cargo del rector invalido');
+
+const rectorCorreoRule = body('rectorCorreo')
+  .optional({ values: 'falsy' })
+  .isEmail().withMessage('Correo del rector invalido');
+
+const rectorTelefonoRule = body('rectorTelefono')
+  .optional({ values: 'falsy' })
+  .isString().withMessage('Telefono del rector invalido')
+  .isLength({ min: 7, max: 30 }).withMessage('Telefono del rector invalido');
+
+const rectorCedulaRule = body('rectorCedula')
+  .optional({ values: 'falsy' })
+  .isString().withMessage('Cedula del rector invalida')
+  .isLength({ min: 5, max: 30 }).withMessage('Cedula del rector invalida');
+
+const rectorPasswordRule = body('rectorPassword')
+  .optional({ values: 'falsy' })
+  .isString().withMessage('Password del rector invalido')
+  .isLength({ min: 4, max: 120 }).withMessage('Password del rector invalido');
+
 export const crearColegioRules = [
-  body('nombre').isString().notEmpty(),
-  body('codigoDane').optional({ values: 'falsy' }).isString().isLength({ min: 3, max: 30 }),
-  body('rectorNombre').optional({ values: 'falsy' }).isString().isLength({ min: 2, max: 120 }),
-  body('rectorApellido').optional({ values: 'falsy' }).isString().isLength({ min: 2, max: 120 }),
-  body('rectorCargo').optional({ values: 'falsy' }).isIn(['rector', 'coordinador']).withMessage('Cargo del rector invalido'),
-  body('rectorCorreo').optional({ values: 'falsy' }).isEmail().withMessage('Correo del rector invalido'),
-  body('rectorTelefono').optional({ values: 'falsy' }).isString().isLength({ min: 7, max: 30 }),
-  body('rectorCedula').optional({ values: 'falsy' }).isString().isLength({ min: 5, max: 30 }),
-  body('rectorPassword').optional({ values: 'falsy' }).isString().isLength({ min: 4, max: 120 }).withMessage('Password del rector invalido')
+  body('nombre').isString().withMessage('Nombre del colegio invalido').notEmpty().withMessage('Nombre del colegio invalido'),
+  codigoDaneRule,
+  rectorNombreRule,
+  rectorApellidoRule,
+  rectorCargoRule,
+  rectorCorreoRule,
+  rectorTelefonoRule,
+  rectorCedulaRule,
+  rectorPasswordRule
 ];
 
 export const actualizarColegioRules = [
   param('id').isInt({ min: 1 }),
-  body('nombre').optional().isString().notEmpty(),
-  body('codigoDane').optional({ values: 'falsy' }).isString().isLength({ min: 3, max: 30 }),
-  body('rectorNombre').optional({ values: 'falsy' }).isString().isLength({ min: 2, max: 120 }),
-  body('rectorApellido').optional({ values: 'falsy' }).isString().isLength({ min: 2, max: 120 }),
-  body('rectorCargo').optional({ values: 'falsy' }).isIn(['rector', 'coordinador']).withMessage('Cargo del rector invalido'),
-  body('rectorCorreo').optional({ values: 'falsy' }).isEmail().withMessage('Correo del rector invalido'),
-  body('rectorTelefono').optional({ values: 'falsy' }).isString().isLength({ min: 7, max: 30 }),
-  body('rectorCedula').optional({ values: 'falsy' }).isString().isLength({ min: 5, max: 30 }),
-  body('rectorPassword').optional({ values: 'falsy' }).isString().isLength({ min: 4, max: 120 }).withMessage('Password del rector invalido')
+  body('nombre').optional().isString().withMessage('Nombre del colegio invalido').notEmpty().withMessage('Nombre del colegio invalido'),
+  codigoDaneRule,
+  rectorNombreRule,
+  rectorApellidoRule,
+  rectorCargoRule,
+  rectorCorreoRule,
+  rectorTelefonoRule,
+  rectorCedulaRule,
+  rectorPasswordRule
 ];
 
 export const listarCursosColegioRules = [
@@ -107,6 +173,7 @@ export const crearDocenteRules = [
   body('password').isString().isLength({ min: 4 }).withMessage('Password invalido'),
   body('cursoIds').optional().isArray(),
   body('cursoIds.*').optional().isInt({ min: 1 }).withMessage('cursoIds debe contener IDs validos'),
+  body('materiasPorCurso').optional().custom(materiasPorCursoValidator),
   body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido')
 ];
 
@@ -117,5 +184,6 @@ export const actualizarDocenteRules = [
   body('password').optional().isString().isLength({ min: 4 }).withMessage('Password invalido'),
   body('cursoIds').optional().isArray(),
   body('cursoIds.*').optional().isInt({ min: 1 }).withMessage('cursoIds debe contener IDs validos'),
+  body('materiasPorCurso').optional().custom(materiasPorCursoValidator),
   body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido')
 ];

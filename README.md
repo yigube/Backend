@@ -10,7 +10,7 @@ Endpoints clave:
 
 ## Configurar
 1) Copia `.env.example` a `.env` y ajusta variables.
-   - Para frontend web, usa `CORS_ORIGINS` con comodin de puerto (ej: `http://192.168.1.247:*`, `http://192.168.100.5:*`, `http://localhost:*`, `http://127.0.0.1:*`).
+   - Para evitar ajustes manuales por IP en LAN, puedes usar `CORS_ORIGINS=*`.
 2) `npm install`
 3) Levanta MySQL con Docker o tu propio servidor.
 4) `npm run db:seed`

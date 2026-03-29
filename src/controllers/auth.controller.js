@@ -22,9 +22,11 @@ export async function login(req, res) {
 
   // Prioridad a usuarios cuando ambas credenciales coinciden.
   if (userPasswordOk) {
-    const colegio = await Colegio.findOne({ where: { id: user.schoolId } });
+    const colegio = user.schoolId
+      ? await Colegio.findOne({ where: { id: user.schoolId } })
+      : null;
     const token = jwt.sign(
-      { id: user.id, rol: user.rol, nombre: user.nombre, schoolId: user.schoolId, schoolName: colegio?.nombre },
+      { id: user.id, rol: user.rol, nombre: user.nombre, schoolId: user.schoolId ?? null, schoolName: colegio?.nombre ?? null },
       process.env.JWT_SECRET,
       { expiresIn: '8h' }
     );
@@ -35,7 +37,7 @@ export async function login(req, res) {
         nombre: user.nombre,
         email: user.email,
         rol: user.rol,
-        schoolId: user.schoolId,
+        schoolId: user.schoolId ?? null,
         schoolName: colegio?.nombre || ''
       }
     });

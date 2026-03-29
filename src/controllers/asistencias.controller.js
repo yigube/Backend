@@ -4,6 +4,7 @@ import { Asistencia, Estudiante, Curso, Periodo } from '../models/index.js';
 import { calcularPorcentajeInasistencia } from '../utils/calc.js';
 
 const ESTADOS_ASISTENCIA = ['presente', 'tarde', 'afuera', 'ausente'];
+const isAdmin = (req) => req.user?.rol === 'admin';
 const estadoACampoPresente = (estado) => estado === 'presente' || estado === 'tarde';
 const flagsDesdeEstado = (estado) => ({
   tarde: estado === 'tarde',
@@ -34,20 +35,37 @@ const normalizeFechaISODateOnly = (value) => {
   }
   return null;
 };
+const resolveCursoForRequest = async (req, cursoId) => {
+  const where = isAdmin(req)
+    ? { id: cursoId }
+    : { id: cursoId, schoolId: req.user.schoolId };
+  return Curso.findOne({ where });
+};
 
 /** Registra asistencia a partir de un QR validando pertenencia a curso y periodo activo. */
 export async function registrarDesdeQR(req, res) {
-  const schoolId = req.user.schoolId;
   const { qr, cursoId, fecha, presente, estado, tarde, afuera, ausente } = req.body;
   if (!qr || !cursoId || !fecha) return res.status(400).json({ error: 'qr, cursoId y fecha son requeridos' });
   if (estado && !ESTADOS_ASISTENCIA.includes(String(estado).toLowerCase())) {
     return res.status(400).json({ error: 'estado invalido' });
   }
 
-  const estudiante = await Estudiante.findOne({
-    where: { qr },
-    include: { model: Curso, where: { schoolId }, required: true }
-  });
+  let schoolId = req.user.schoolId;
+  let curso = null;
+  let estudiante = null;
+
+  if (isAdmin(req)) {
+    curso = await resolveCursoForRequest(req, cursoId);
+    if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
+    schoolId = curso.schoolId;
+    estudiante = await Estudiante.findOne({ where: { qr } });
+  } else {
+    estudiante = await Estudiante.findOne({
+      where: { qr },
+      include: { model: Curso, where: { schoolId }, required: true }
+    });
+  }
+
   if (!estudiante) return res.status(404).json({ error: 'Estudiante no encontrado' });
 
   // Normaliza fecha a YYYY-MM-DD para comparar con periodos (almacenados por rango).
@@ -119,12 +137,12 @@ export async function registrarDesdeQR(req, res) {
 
 /** Devuelve resumen de asistencias por curso/periodo incluyendo alertas de inasistencia. */
 export async function resumenCurso(req, res) {
-  const schoolId = req.user.schoolId;
   const { cursoId, periodoId, totalClases: totalClasesParam } = req.query;
   if (!cursoId || !periodoId) return res.status(400).json({ error: 'cursoId y periodoId son requeridos' });
 
-  const curso = await Curso.findOne({ where: { id: cursoId, schoolId } });
+  const curso = await resolveCursoForRequest(req, cursoId);
   if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
+  const schoolId = curso.schoolId;
   const periodo = await Periodo.findOne({ where: { id: periodoId, schoolId } });
   if (!periodo) return res.status(404).json({ error: 'Periodo no encontrado' });
 
@@ -165,4 +183,57 @@ export async function resumenCurso(req, res) {
   }));
 
   res.json({ cursoId: Number(cursoId), periodoId: Number(periodoId), totalClasesPeriodo, resumen: data, alertas });
+}
+
+/** Lista estudiantes ausentes para una fecha dada (sin registro o con estado ausente). */
+export async function listarAusentesCurso(req, res) {
+  const cursoId = Number(req.query.cursoId);
+  const fechaISO = normalizeFechaISODateOnly(req.query.fecha) || new Date().toISOString().slice(0, 10);
+
+  if (!cursoId) {
+    return res.status(400).json({ error: 'cursoId es requerido' });
+  }
+  if (!fechaISO) {
+    return res.status(400).json({ error: 'fecha invalida' });
+  }
+
+  const curso = await resolveCursoForRequest(req, cursoId);
+  if (!curso) {
+    return res.status(404).json({ error: 'Curso no encontrado' });
+  }
+  const schoolId = curso.schoolId;
+
+  const estudiantes = await Estudiante.findAll({
+    where: { cursoId },
+    order: [['apellidos', 'ASC'], ['nombres', 'ASC']]
+  });
+
+  const asistenciasDia = await Asistencia.findAll({
+    where: { cursoId, schoolId, fecha: fechaISO },
+    attributes: ['estudianteId', 'estado']
+  });
+  const asistenciaPorEstudiante = new Map(
+    asistenciasDia.map((item) => [Number(item.estudianteId), item.estado || null])
+  );
+
+  const ausentes = estudiantes
+    .filter((estudiante) => {
+      const estado = asistenciaPorEstudiante.get(Number(estudiante.id));
+      return !estado || estado === 'ausente';
+    })
+    .map((estudiante) => ({
+      id: estudiante.id,
+      nombres: estudiante.nombres,
+      apellidos: estudiante.apellidos,
+      qr: estudiante.qr,
+      codigoEstudiante: estudiante.codigoEstudiante || null,
+      estadoActual: asistenciaPorEstudiante.get(Number(estudiante.id)) || null
+    }));
+
+  res.json({
+    cursoId,
+    fecha: fechaISO,
+    totalAusentes: ausentes.length,
+    ausentes
+  });
 }

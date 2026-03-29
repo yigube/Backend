@@ -1,13 +1,36 @@
 ﻿// CRUD basico para cursos, estudiantes y periodos con scope por colegio.
 import { ForeignKeyConstraintError, Op, UniqueConstraintError } from 'sequelize';
 import bcrypt from 'bcrypt';
-import { Curso, Estudiante, Periodo, Usuario, CursoDocente, Colegio, Rector } from '../models/index.js';
+import { sequelize } from '../config/database.js';
+import {
+  Curso,
+  Estudiante,
+  Periodo,
+  Usuario,
+  CursoDocente,
+  Colegio,
+  Rector,
+  Materia,
+  DocenteCursoMateria
+} from '../models/index.js';
 
 const isDocente = (req) => req.user?.rol === 'docente';
-const canManageAcrossSchools = (req) => req.user?.rol === 'admin';
+const canManageAcrossSchools = (req) => req.user?.rol === 'admin' && !normalizedSchoolId(req.user?.schoolId);
 const normalizedSchoolId = (value) => {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
+};
+const getUserSchoolId = (req) => normalizedSchoolId(req.user?.schoolId);
+const resolveManagedSchoolId = (req, explicitValue = null) => {
+  const explicitSchoolId = normalizedSchoolId(explicitValue);
+  if (canManageAcrossSchools(req)) return explicitSchoolId || getUserSchoolId(req);
+  return getUserSchoolId(req);
+};
+const ensureManagedSchoolId = (req, res, explicitValue = null) => {
+  const schoolId = resolveManagedSchoolId(req, explicitValue);
+  if (schoolId) return schoolId;
+  res.status(400).json({ error: 'schoolId requerido para administradores' });
+  return null;
 };
 const normalizedIds = (values) => {
   if (!Array.isArray(values)) return [];
@@ -17,6 +40,164 @@ const normalizedIds = (values) => {
     if (Number.isInteger(n) && n > 0) set.add(n);
   });
   return Array.from(set);
+};
+const normalizeMateriasPorCurso = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const result = {};
+
+  Object.entries(value).forEach(([cursoIdRaw, materiasRaw]) => {
+    const cursoId = Number(cursoIdRaw);
+    if (!Number.isInteger(cursoId) || cursoId <= 0) return;
+
+    let materiasList = [];
+    if (Array.isArray(materiasRaw)) {
+      materiasList = materiasRaw;
+    } else if (typeof materiasRaw === 'string') {
+      materiasList = materiasRaw.split(',');
+    } else {
+      return;
+    }
+
+    const uniqueMaterias = Array.from(
+      new Set(
+        materiasList
+          .map((item) => String(item || '').trim())
+          .filter(Boolean)
+      )
+    );
+
+    if (uniqueMaterias.length > 0) {
+      result[cursoId] = uniqueMaterias;
+    }
+  });
+
+  return result;
+};
+const mapMateriasToDocentesCursos = (docentes = [], materiaLinks = []) => {
+  const materiasMap = new Map();
+  materiaLinks.forEach((link) => {
+    const docenteId = Number(link?.usuarioId);
+    const cursoId = Number(link?.cursoId);
+    const materiaNombre = String(link?.materia?.nombre || '').trim();
+    if (!docenteId || !cursoId || !materiaNombre) return;
+    const key = `${docenteId}:${cursoId}`;
+    const current = materiasMap.get(key) || [];
+    if (!current.includes(materiaNombre)) current.push(materiaNombre);
+    materiasMap.set(key, current);
+  });
+
+  return docentes.map((docente) => {
+    const raw = docente.toJSON ? docente.toJSON() : docente;
+    const cursos = Array.isArray(raw.cursos) ? raw.cursos : [];
+    return {
+      ...raw,
+      cursos: cursos.map((curso) => {
+        const rawCurso = curso?.toJSON ? curso.toJSON() : curso;
+        return {
+          ...rawCurso,
+          materias: materiasMap.get(`${Number(raw.id)}:${Number(rawCurso?.id)}`) || []
+        };
+      })
+    };
+  });
+};
+const syncMateriasDocente = async ({ docenteId, schoolId, cursoIds = [], materiasPorCurso = {} }) => {
+  const hasLegacyMateriumId = Object.prototype.hasOwnProperty.call(DocenteCursoMateria.rawAttributes || {}, 'materiumId');
+  const cursoIdsValidos = normalizedIds(cursoIds);
+  const materiasNormalizadas = normalizeMateriasPorCurso(materiasPorCurso);
+
+  if (cursoIdsValidos.length === 0) {
+    await DocenteCursoMateria.destroy({ where: { usuarioId: docenteId, schoolId } });
+    return;
+  }
+
+  await DocenteCursoMateria.destroy({
+    where: {
+      usuarioId: docenteId,
+      schoolId,
+      cursoId: { [Op.notIn]: cursoIdsValidos }
+    }
+  });
+
+  const desiredPairs = [];
+  cursoIdsValidos.forEach((cursoId) => {
+    const materias = materiasNormalizadas[cursoId] || [];
+    materias.forEach((nombre) => {
+      desiredPairs.push({ cursoId, nombre });
+    });
+  });
+
+  await DocenteCursoMateria.destroy({
+    where: {
+      usuarioId: docenteId,
+      schoolId,
+      cursoId: { [Op.in]: cursoIdsValidos }
+    }
+  });
+
+  if (!desiredPairs.length) return;
+
+  const uniqueNames = Array.from(new Set(desiredPairs.map((item) => item.nombre)));
+  const existingMaterias = await Materia.findAll({
+    where: { schoolId, nombre: { [Op.in]: uniqueNames } },
+    attributes: ['id', 'nombre']
+  });
+  const existingNames = new Set(existingMaterias.map((item) => item.nombre));
+  const missingNames = uniqueNames.filter((name) => !existingNames.has(name));
+
+  if (missingNames.length) {
+    await Materia.bulkCreate(
+      missingNames.map((nombre) => ({ nombre, schoolId })),
+      { ignoreDuplicates: true }
+    );
+  }
+
+  const materias = await Materia.findAll({
+    where: { schoolId, nombre: { [Op.in]: uniqueNames } },
+    attributes: ['id', 'nombre']
+  });
+  const materiaIdByName = new Map(materias.map((item) => [item.nombre, Number(item.id)]));
+
+  const links = desiredPairs
+    .map((pair) => {
+      const materiaId = materiaIdByName.get(pair.nombre);
+      const link = {
+        usuarioId: docenteId,
+        cursoId: pair.cursoId,
+        materiaId,
+        schoolId
+      };
+      // Compatibilidad con esquemas viejos donde Sequelize genero `materiumId`.
+      if (hasLegacyMateriumId) link.materiumId = materiaId;
+      return link;
+    })
+    .filter((item) => Number.isInteger(item.materiaId) && item.materiaId > 0);
+
+  if (links.length) {
+    await DocenteCursoMateria.bulkCreate(links, { ignoreDuplicates: true });
+  }
+};
+const cleanupUnusedMaterias = async ({ schoolIds = [], transaction } = {}) => {
+  const schoolIdsNormalizados = normalizedIds(schoolIds);
+  if (!schoolIdsNormalizados.length) return;
+
+  const activeLinks = await DocenteCursoMateria.findAll({
+    where: { schoolId: { [Op.in]: schoolIdsNormalizados } },
+    attributes: ['materiaId'],
+    group: ['materiaId'],
+    raw: true,
+    transaction
+  });
+  const materiaIdsActivos = activeLinks
+    .map((item) => Number(item?.materiaId))
+    .filter((id) => id > 0);
+
+  const where = { schoolId: { [Op.in]: schoolIdsNormalizados } };
+  if (materiaIdsActivos.length) {
+    where.id = { [Op.notIn]: materiaIdsActivos };
+  }
+
+  await Materia.destroy({ where, transaction });
 };
 const normalizeCodigoDane = (value) => {
   if (!value) return null;
@@ -105,7 +286,8 @@ const serializeColegio = (colegio) => {
 /** Crea un curso asociado al colegio del usuario. Si es docente, queda asignado a el mismo. */
 export async function crearCurso(req, res){
   // Admin puede crear en otro colegio; docentes/otros quedan en su propio colegio.
-  const schoolId = canManageAcrossSchools(req) && req.body.schoolId ? req.body.schoolId : req.user.schoolId;
+  const schoolId = ensureManagedSchoolId(req, res, req.body.schoolId);
+  if (!schoolId) return;
   const curso = await Curso.create({ ...req.body, schoolId });
 
   if (isDocente(req)) {
@@ -113,9 +295,9 @@ export async function crearCurso(req, res){
     await curso.addDocente(req.user.id, { through: { schoolId: req.user.schoolId } });
   } else if (Array.isArray(req.body.docenteIds) && req.body.docenteIds.length) {
     const docentes = await Usuario.findAll({
-      where: { id: { [Op.in]: req.body.docenteIds }, schoolId: req.user.schoolId, rol: 'docente' }
+      where: { id: { [Op.in]: req.body.docenteIds }, schoolId, rol: 'docente' }
     });
-    await curso.addDocentes(docentes, { through: { schoolId: req.user.schoolId } });
+    await curso.addDocentes(docentes, { through: { schoolId } });
   }
 
   res.status(201).json(curso);
@@ -125,8 +307,11 @@ export async function crearCurso(req, res){
 export async function listarCursos(req, res){
   const { q, schoolId: querySchool } = req.query;
   const querySchoolId = normalizedSchoolId(querySchool);
-  const schoolId = !isDocente(req) && querySchoolId ? querySchoolId : req.user.schoolId;
-  const where = { schoolId };
+  const schoolId = canManageAcrossSchools(req)
+    ? (querySchoolId || getUserSchoolId(req))
+    : (!isDocente(req) && querySchoolId ? querySchoolId : getUserSchoolId(req));
+  const where = {};
+  if (schoolId) where.schoolId = schoolId;
   if (q) where.nombre = { [Op.like]: `%${q}%` };
 
   if (isDocente(req)) {
@@ -192,7 +377,11 @@ export async function eliminarCurso(req, res){
 /** Crea un estudiante validando que el curso pertenezca al mismo colegio. */
 export async function crearEstudiante(req, res){
   // Garantiza que el curso pertenece al mismo colegio del usuario.
-  const curso = await Curso.findOne({ where: { id: req.body.cursoId, schoolId: req.user.schoolId } });
+  const curso = await Curso.findOne({
+    where: canManageAcrossSchools(req)
+      ? { id: req.body.cursoId }
+      : { id: req.body.cursoId, schoolId: getUserSchoolId(req) }
+  });
   if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
   try {
     const obj = await Estudiante.create({
@@ -221,7 +410,11 @@ export async function crearEstudiantesLote(req, res) {
   if (rows.length === 0) {
     return res.status(400).json({ error: 'Debes enviar al menos un estudiante' });
   }
-  const curso = await Curso.findOne({ where: { id: cursoId, schoolId: req.user.schoolId } });
+  const curso = await Curso.findOne({
+    where: canManageAcrossSchools(req)
+      ? { id: cursoId }
+      : { id: cursoId, schoolId: getUserSchoolId(req) }
+  });
   if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
 
   const payload = rows.map((item, idx) => ({
@@ -259,8 +452,10 @@ export async function crearEstudiantesLote(req, res) {
 /** Lista estudiantes del colegio mediante join con cursos. */
 export async function listarEstudiantes(req, res){
   // Join con cursos para acotar al colegio del usuario autenticado.
+  const querySchoolId = normalizedSchoolId(req.query.schoolId);
+  const schoolId = canManageAcrossSchools(req) ? (querySchoolId || getUserSchoolId(req)) : getUserSchoolId(req);
   const ests = await Estudiante.findAll({
-    include: { model: Curso, where: { schoolId: req.user.schoolId }, attributes: [] }
+    include: { model: Curso, where: schoolId ? { schoolId } : {}, attributes: [] }
   });
   res.json(ests);
 }
@@ -269,7 +464,11 @@ export async function listarEstudiantes(req, res){
 export async function actualizarEstudiante(req, res) {
   const estudiante = await Estudiante.findOne({
     where: { id: req.params.id },
-    include: [{ model: Curso, where: { schoolId: req.user.schoolId }, attributes: ['id', 'schoolId'] }]
+    include: [{
+      model: Curso,
+      where: canManageAcrossSchools(req) ? {} : { schoolId: getUserSchoolId(req) },
+      attributes: ['id', 'schoolId']
+    }]
   });
   if (!estudiante) return res.status(404).json({ error: 'Estudiante no encontrado' });
 
@@ -278,7 +477,11 @@ export async function actualizarEstudiante(req, res) {
     if (!Number.isInteger(nuevoCursoId) || nuevoCursoId <= 0) {
       return res.status(400).json({ error: 'cursoId invalido' });
     }
-    const cursoDestino = await Curso.findOne({ where: { id: nuevoCursoId, schoolId: req.user.schoolId } });
+    const cursoDestino = await Curso.findOne({
+      where: canManageAcrossSchools(req)
+        ? { id: nuevoCursoId }
+        : { id: nuevoCursoId, schoolId: getUserSchoolId(req) }
+    });
     if (!cursoDestino) return res.status(404).json({ error: 'Curso no encontrado' });
     estudiante.cursoId = nuevoCursoId;
   }
@@ -311,7 +514,11 @@ export async function actualizarEstudiante(req, res) {
 export async function eliminarEstudiante(req, res) {
   const estudiante = await Estudiante.findOne({
     where: { id: req.params.id },
-    include: [{ model: Curso, where: { schoolId: req.user.schoolId }, attributes: ['id'] }]
+    include: [{
+      model: Curso,
+      where: canManageAcrossSchools(req) ? {} : { schoolId: getUserSchoolId(req) },
+      attributes: ['id']
+    }]
   });
   if (!estudiante) return res.status(404).json({ error: 'Estudiante no encontrado' });
 
@@ -322,9 +529,11 @@ export async function eliminarEstudiante(req, res) {
 /** Lista docentes de un colegio (admin puede filtrar por schoolId). */
 export async function listarDocentes(req, res) {
   const querySchoolId = normalizedSchoolId(req.query.schoolId);
-  const schoolId = (!isDocente(req) && querySchoolId) ? querySchoolId : req.user.schoolId;
+  const schoolId = canManageAcrossSchools(req)
+    ? (querySchoolId || getUserSchoolId(req))
+    : ((!isDocente(req) && querySchoolId) ? querySchoolId : getUserSchoolId(req));
   const docentes = await Usuario.findAll({
-    where: { schoolId, rol: 'docente' },
+    where: schoolId ? { schoolId, rol: 'docente' } : { rol: 'docente' },
     attributes: ['id', 'nombre', 'email', 'schoolId'],
     include: [{
       model: Curso,
@@ -333,15 +542,29 @@ export async function listarDocentes(req, res) {
       through: { attributes: [] }
     }]
   });
-  res.json(docentes);
+
+  const docenteIds = docentes.map((docente) => Number(docente.id)).filter((id) => id > 0);
+  const materiaLinks = docenteIds.length
+    ? await DocenteCursoMateria.findAll({
+      where: schoolId
+        ? { schoolId, usuarioId: { [Op.in]: docenteIds } }
+        : { usuarioId: { [Op.in]: docenteIds } },
+      attributes: ['usuarioId', 'cursoId'],
+      include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }]
+    })
+    : [];
+
+  res.json(mapMateriasToDocentesCursos(docentes, materiaLinks));
 }
 
 /** Lista cursos disponibles para asignar a docentes por colegio (solo admin). */
 export async function listarCursosDisponiblesDocente(req, res) {
   const querySchoolId = normalizedSchoolId(req.query.schoolId);
-  const schoolId = canManageAcrossSchools(req) && querySchoolId ? querySchoolId : req.user.schoolId;
+  const schoolId = canManageAcrossSchools(req)
+    ? (querySchoolId || getUserSchoolId(req))
+    : getUserSchoolId(req);
   const cursos = await Curso.findAll({
-    where: { schoolId },
+    where: schoolId ? { schoolId } : {},
     attributes: ['id', 'nombre', 'schoolId'],
     order: [['nombre', 'ASC']]
   });
@@ -367,20 +590,27 @@ export async function listarCursosPorColegio(req, res) {
 
 /** Crea un periodo academico en el colegio actual. */
 export async function crearPeriodo(req, res){
-  const schoolId = req.user.rol === 'admin' && req.body.schoolId ? req.body.schoolId : req.user.schoolId;
+  const schoolId = ensureManagedSchoolId(req, res, req.body.schoolId);
+  if (!schoolId) return;
   const obj = await Periodo.create({ ...req.body, schoolId });
   res.status(201).json(obj);
 }
 
 /** Lista periodos del colegio actual. */
 export async function listarPeriodos(req, res){
-  const schoolId = (req.user.rol === 'admin' && req.query.schoolId) ? req.query.schoolId : req.user.schoolId;
-  res.json(await Periodo.findAll({ where: { schoolId } }));
+  const schoolId = canManageAcrossSchools(req)
+    ? (normalizedSchoolId(req.query.schoolId) || getUserSchoolId(req))
+    : getUserSchoolId(req);
+  res.json(await Periodo.findAll({ where: schoolId ? { schoolId } : {} }));
 }
 
 /** Actualiza datos de un periodo dentro del mismo colegio. */
 export async function actualizarPeriodo(req, res){
-  const periodo = await Periodo.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId } });
+  const periodo = await Periodo.findOne({
+    where: canManageAcrossSchools(req)
+      ? { id: req.params.id }
+      : { id: req.params.id, schoolId: getUserSchoolId(req) }
+  });
   if (!periodo) return res.status(404).json({ error: 'Periodo no encontrado' });
 
   const { nombre, fechaInicio, fechaFin } = req.body;
@@ -394,7 +624,11 @@ export async function actualizarPeriodo(req, res){
 
 /** Elimina un periodo dentro del mismo colegio. */
 export async function eliminarPeriodo(req, res){
-  const periodo = await Periodo.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId } });
+  const periodo = await Periodo.findOne({
+    where: canManageAcrossSchools(req)
+      ? { id: req.params.id }
+      : { id: req.params.id, schoolId: getUserSchoolId(req) }
+  });
   if (!periodo) return res.status(404).json({ error: 'Periodo no encontrado' });
   try {
     await periodo.destroy();
@@ -409,7 +643,8 @@ export async function eliminarPeriodo(req, res){
 
 /** Crea un registro de curso_docente de ejemplo dentro del colegio del usuario (admin). */
 export async function seedCursoDocente(req, res){
-  const schoolId = req.user.schoolId;
+  const schoolId = ensureManagedSchoolId(req, res, req.body.schoolId || req.query.schoolId);
+  if (!schoolId) return;
   const curso = await Curso.findOne({ where: { schoolId } });
   if (!curso) return res.status(404).json({ error: 'No hay cursos en este colegio' });
 
@@ -531,9 +766,10 @@ export async function eliminarColegio(req, res) {
 
 /** Crea un docente y lo asigna a cursos del mismo colegio (solo admin). */
 export async function crearDocente(req, res) {
-  const { nombre, email, password, cursoIds = [], schoolId: bodySchool } = req.body;
+  const { nombre, email, password, cursoIds = [], materiasPorCurso = {}, schoolId: bodySchool } = req.body;
   const passwordHash = await bcrypt.hash(password, 10);
-  const schoolId = canManageAcrossSchools(req) && bodySchool ? bodySchool : req.user.schoolId;
+  const schoolId = ensureManagedSchoolId(req, res, bodySchool);
+  if (!schoolId) return;
   const cursoIdsNormalizados = normalizedIds(cursoIds);
   let cursos = [];
 
@@ -552,13 +788,28 @@ export async function crearDocente(req, res) {
     await docente.setCursos(cursos, { through: { schoolId } });
   }
 
+  await syncMateriasDocente({
+    docenteId: docente.id,
+    schoolId,
+    cursoIds: cursoIdsNormalizados,
+    materiasPorCurso
+  });
+
   const cursosDocente = await docente.getCursos({ attributes: ['id', 'nombre'] });
-  res.status(201).json({ ...docente.toJSON(), cursos: cursosDocente });
+  const materiaLinks = await DocenteCursoMateria.findAll({
+    where: { schoolId, usuarioId: docente.id },
+    attributes: ['usuarioId', 'cursoId'],
+    include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }]
+  });
+  const [docenteConMaterias] = mapMateriasToDocentesCursos([
+    { ...docente.toJSON(), cursos: cursosDocente }
+  ], materiaLinks);
+  res.status(201).json(docenteConMaterias);
 }
 
 /** Actualiza datos y asignaciones de un docente del mismo colegio (solo admin). */
 export async function actualizarDocente(req, res) {
-  const { nombre, email, password, cursoIds, schoolId: bodySchool } = req.body;
+  const { nombre, email, password, cursoIds, materiasPorCurso = {}, schoolId: bodySchool } = req.body;
   const where = { id: req.params.id, rol: 'docente' };
   if (!canManageAcrossSchools(req)) where.schoolId = req.user.schoolId;
   const docente = await Usuario.findOne({ where });
@@ -583,7 +834,25 @@ export async function actualizarDocente(req, res) {
   }
 
   const cursosDocente = await docente.getCursos({ attributes: ['id', 'nombre'] });
-  res.json({ ...docente.toJSON(), cursos: cursosDocente });
+  const hasMateriasPayload = req.body.materiasPorCurso && typeof req.body.materiasPorCurso === 'object';
+  if (Array.isArray(cursoIds) || hasMateriasPayload) {
+    await syncMateriasDocente({
+      docenteId: docente.id,
+      schoolId: targetSchoolId,
+      cursoIds: cursosDocente.map((curso) => Number(curso.id)),
+      materiasPorCurso
+    });
+  }
+
+  const materiaLinks = await DocenteCursoMateria.findAll({
+    where: { schoolId: targetSchoolId, usuarioId: docente.id },
+    attributes: ['usuarioId', 'cursoId'],
+    include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }]
+  });
+  const [docenteConMaterias] = mapMateriasToDocentesCursos([
+    { ...docente.toJSON(), cursos: cursosDocente }
+  ], materiaLinks);
+  res.json(docenteConMaterias);
 }
 
 /** Elimina un docente del mismo colegio (solo admin). */
@@ -592,6 +861,27 @@ export async function eliminarDocente(req, res) {
   if (!canManageAcrossSchools(req)) where.schoolId = req.user.schoolId;
   const docente = await Usuario.findOne({ where });
   if (!docente) return res.status(404).json({ error: 'Docente no encontrado' });
-  await docente.destroy();
+  const materiaLinks = await DocenteCursoMateria.findAll({
+    where: { usuarioId: docente.id },
+    attributes: ['schoolId'],
+    raw: true
+  });
+  const schoolIdsToCleanup = normalizedIds([
+    docente.schoolId,
+    ...materiaLinks.map((item) => item?.schoolId)
+  ]);
+
+  await sequelize.transaction(async (transaction) => {
+    await DocenteCursoMateria.destroy({
+      where: { usuarioId: docente.id },
+      transaction
+    });
+    await CursoDocente.destroy({
+      where: { usuarioId: docente.id },
+      transaction
+    });
+    await cleanupUnusedMaterias({ schoolIds: schoolIdsToCleanup, transaction });
+    await docente.destroy({ transaction });
+  });
   res.json({ ok: true });
 }
