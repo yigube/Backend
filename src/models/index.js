@@ -99,13 +99,14 @@ export class Asistencia extends Model {}
 Asistencia.init({
   fecha: { type: DataTypes.DATEONLY, allowNull: false },
   horaRegistro: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  materiaId: { type: DataTypes.INTEGER, allowNull: true },
   estado: { type: DataTypes.STRING, allowNull: false, defaultValue: 'presente' },
   presente: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   tarde: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   afuera: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   ausente: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   schoolId: { type: DataTypes.INTEGER, allowNull: false }
-}, { sequelize, modelName: 'asistencia', tableName: 'asistencias', indexes: [{ unique: true, fields: ['fecha','estudiante_id','curso_id','school_id'] }] });
+}, { sequelize, modelName: 'asistencia', tableName: 'asistencias', indexes: [{ unique: true, fields: ['fecha','estudiante_id','curso_id','school_id','materia_id'] }] });
 
 // Associations
 Colegio.hasMany(Usuario, { foreignKey: { allowNull: true, name: 'schoolId' } });
@@ -157,6 +158,9 @@ Asistencia.belongsTo(Periodo);
 
 Colegio.hasMany(Asistencia, { foreignKey: { allowNull: false, name: 'schoolId' } });
 Asistencia.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
+
+Materia.hasMany(Asistencia, { foreignKey: { allowNull: true, name: 'materiaId' } });
+Asistencia.belongsTo(Materia, { as: 'materia', foreignKey: { allowNull: true, name: 'materiaId' } });
 
 export default {
   Colegio,

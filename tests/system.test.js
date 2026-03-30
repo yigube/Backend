@@ -3,7 +3,7 @@ import request from 'supertest';
 import bcrypt from 'bcrypt';
 import { init } from '../src/app.js';
 import { sequelize } from '../src/config/database.js';
-import { Usuario, Colegio, Curso, Estudiante, Periodo } from '../src/models/index.js';
+import { Usuario, Colegio, Curso, CursoDocente, DocenteCursoMateria, Estudiante, EstudianteMateria, Materia, Periodo } from '../src/models/index.js';
 
 let app;
 let adminToken;
@@ -76,6 +76,13 @@ test('Flujo completo: admin crea curso/periodo, docente registra asistencias, ge
     .set('Authorization', `Bearer ${adminToken}`)
     .send({ nombres: 'Luis', apellidos: 'Perez', qr: 'SYS-LUIS-QR', cursoId });
   expect(estLuis.status).toBe(201);
+
+  const docente = await Usuario.findOne({ where: { email: 'docente@qa.com' } });
+  const materia = await Materia.create({ nombre: 'General', schoolId: school.id });
+  await CursoDocente.create({ usuarioId: docente.id, cursoId, schoolId: school.id });
+  await DocenteCursoMateria.create({ usuarioId: docente.id, cursoId, materiaId: materia.id, schoolId: school.id });
+  await EstudianteMateria.create({ estudianteId: estAna.body.id, cursoId, materiaId: materia.id, schoolId: school.id });
+  await EstudianteMateria.create({ estudianteId: estLuis.body.id, cursoId, materiaId: materia.id, schoolId: school.id });
 
   // Docente registra asistencias (2 clases)
   const fecha1 = '2025-02-10';

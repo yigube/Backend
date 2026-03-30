@@ -21,6 +21,16 @@ let studentA;
 let studentB;
 let defaultMateria;
 
+async function getSchoolMateriasWithoutDefault(schoolId = school?.id) {
+  const rows = await Materia.findAll({ where: { schoolId }, order: [['nombre', 'ASC']] });
+  return rows.filter((item) => Number(item.id) !== Number(defaultMateria?.id));
+}
+
+async function countSchoolMateriasWithoutDefault(schoolId = school?.id) {
+  const rows = await getSchoolMateriasWithoutDefault(schoolId);
+  return rows.length;
+}
+
 async function login(email, password) {
   const res = await request(app).post('/auth/login').send({ email, password });
   expect(res.status).toBe(200);
@@ -545,7 +555,7 @@ test('Admin crea docente con materias en multiples cursos y las lista completas'
   expect(cursoDocenteRows).toHaveLength(3);
   expect(cursoDocenteRows.map((row) => row.cursoId).sort((a, b) => a - b)).toEqual([curso.id, cursoDos.id, cursoTres.id].sort((a, b) => a - b));
 
-  const materiasDb = await Materia.findAll({ where: { schoolId: school.id }, order: [['nombre', 'ASC']] });
+  const materiasDb = await getSchoolMateriasWithoutDefault();
   expect(materiasDb.map((item) => item.nombre)).toEqual(['Etica', 'Fisica', 'Sociales']);
 
   const materiaByName = new Map(materiasDb.map((item) => [item.nombre, item.id]));
@@ -595,7 +605,7 @@ test('Admin crea docente con 4 materias en un curso y se insertan completas en b
   expect(cursoDocenteRows).toHaveLength(1);
   expect(cursoDocenteRows[0].cursoId).toBe(curso.id);
 
-  const materiasDb = await Materia.findAll({ where: { schoolId: school.id }, order: [['nombre', 'ASC']] });
+  const materiasDb = await getSchoolMateriasWithoutDefault();
   expect(materiasDb.map((item) => item.nombre)).toEqual([...materiasEsperadas].sort());
 
   const materiaByName = new Map(materiasDb.map((item) => [item.nombre, item.id]));
@@ -647,7 +657,7 @@ test('Admin puede asignar la misma materia al mismo docente en cursos distintos'
   const docenteDb = await Usuario.findOne({ where: { email: 'docente.misma.materia@demo.com' } });
   expect(docenteDb).toBeTruthy();
 
-  const materiasDb = await Materia.findAll({ where: { schoolId: school.id }, order: [['nombre', 'ASC']] });
+  const materiasDb = await getSchoolMateriasWithoutDefault();
   expect(materiasDb.map((item) => item.nombre)).toEqual(['Matematicas']);
 
   const materiaLinks = await DocenteCursoMateria.findAll({
@@ -783,10 +793,7 @@ test('Admin actualiza materias de un docente y elimina materias huerfanas del ca
   expect(updateRes.body.cursos).toHaveLength(1);
   expect(updateRes.body.cursos[0].materias).toEqual(['Ac']);
 
-  const materiasDb = await Materia.findAll({
-    where: { schoolId: school.id },
-    order: [['nombre', 'ASC']]
-  });
+  const materiasDb = await getSchoolMateriasWithoutDefault();
   expect(materiasDb.map((item) => item.nombre)).toEqual(['Ac']);
 
   const materiaLinks = await DocenteCursoMateria.findAll({
@@ -843,10 +850,7 @@ test('Admin actualiza materias y conserva las materias compartidas por otros doc
 
   expect(updateRes.status).toBe(200);
 
-  const materiasDb = await Materia.findAll({
-    where: { schoolId: school.id },
-    order: [['nombre', 'ASC']]
-  });
+  const materiasDb = await getSchoolMateriasWithoutDefault();
   expect(materiasDb.map((item) => item.nombre)).toEqual(['A', 'Ac']);
 
   const linksDocenteUno = await DocenteCursoMateria.findAll({
@@ -1020,10 +1024,7 @@ test('Admin actualiza una materia sin tilde y conserva el vinculo con una materi
   expect(updateRes.body.cursos).toHaveLength(1);
   expect(updateRes.body.cursos[0].materias).toEqual(['Filosofía']);
 
-  const materiasDb = await Materia.findAll({
-    where: { schoolId: school.id },
-    order: [['nombre', 'ASC']]
-  });
+  const materiasDb = await getSchoolMateriasWithoutDefault();
   expect(materiasDb.map((item) => item.nombre)).toEqual(['Filosofía']);
 
   const materiaLinks = await DocenteCursoMateria.findAll({
@@ -1069,10 +1070,7 @@ test('Admin crea un docente usando una materia sin tilde y reutiliza la materia 
   expect(createRes.body.cursos).toHaveLength(1);
   expect(createRes.body.cursos[0].materias).toEqual(['Filosofía']);
 
-  const materiasDb = await Materia.findAll({
-    where: { schoolId: school.id },
-    order: [['nombre', 'ASC']]
-  });
+  const materiasDb = await getSchoolMateriasWithoutDefault();
   expect(materiasDb.map((item) => item.nombre)).toEqual(['Filosofía']);
 });
 
@@ -1111,7 +1109,7 @@ test('Admin elimina docente y borra en cascada sus cursos y materias asignadas',
   expect(await Usuario.findByPk(docenteId)).toBeNull();
   expect(await CursoDocente.count({ where: { usuarioId: docenteId } })).toBe(0);
   expect(await DocenteCursoMateria.count({ where: { usuarioId: docenteId } })).toBe(0);
-  expect(await Materia.count({ where: { schoolId: school.id } })).toBe(0);
+  expect(await countSchoolMateriasWithoutDefault()).toBe(0);
 
   const listRes = await request(app)
     .get(`/docentes?schoolId=${school.id}`)
@@ -1401,7 +1399,7 @@ test('Docentes del mismo curso solo ven estudiantes de sus materias', async () =
   expect(listOtherTeacher.body.some((item) => item.id === createRes.body.id)).toBe(false);
 });
 
-test('Docente no ve estudiantes de otro docente si solo comparte una parte de las materias del curso', async () => {
+test('Docente puede listar estudiantes si comparte una parte de las materias del curso', async () => {
   const docenteUno = await asignarCursoADocente(curso.id, school.id, 'docente@demo.com');
   const docenteDos = await asignarCursoADocente(curso.id, school.id, 'docente2@demo.com');
   const materiaEtica = await Materia.create({ nombre: 'Etica', schoolId: school.id });
@@ -1436,7 +1434,9 @@ test('Docente no ve estudiantes de otro docente si solo comparte una parte de la
     .set('Authorization', `Bearer ${secondTeacherToken}`);
 
   expect(listOtherTeacher.status).toBe(200);
-  expect(listOtherTeacher.body.some((item) => item.id === createRes.body.id)).toBe(false);
+  expect(listOtherTeacher.body.some((item) => item.id === createRes.body.id)).toBe(true);
+  const estudianteVisible = listOtherTeacher.body.find((item) => item.id === createRes.body.id);
+  expect(estudianteVisible?.materias).toEqual(['Etica']);
 });
 
 test('Docente no puede actualizar ni eliminar estudiantes de otra materia en el mismo curso', async () => {
@@ -1465,6 +1465,45 @@ test('Docente no puede actualizar ni eliminar estudiantes de otra materia en el 
     .put(`/estudiantes/${createRes.body.id}`)
     .set('Authorization', `Bearer ${secondTeacherToken}`)
     .send({ nombres: 'Mario', apellidos: 'Suarez', qr: createRes.body.qr, materias: ['Filosofia'] });
+
+  expect(updateRes.status).toBe(403);
+  expect(updateRes.body).toEqual({ error: 'No autorizado' });
+
+  const deleteRes = await request(app)
+    .delete(`/estudiantes/${createRes.body.id}`)
+    .set('Authorization', `Bearer ${secondTeacherToken}`);
+
+  expect(deleteRes.status).toBe(403);
+  expect(deleteRes.body).toEqual({ error: 'No autorizado' });
+});
+
+test('Docente no puede actualizar ni eliminar un estudiante si solo comparte una parte de sus materias', async () => {
+  const docenteUno = await asignarCursoADocente(curso.id, school.id, 'docente@demo.com');
+  const docenteDos = await asignarCursoADocente(curso.id, school.id, 'docente2@demo.com');
+  const materiaEtica = await Materia.create({ nombre: 'Etica', schoolId: school.id });
+  const materiaSociales = await Materia.create({ nombre: 'Sociales', schoolId: school.id });
+
+  await DocenteCursoMateria.create({ usuarioId: docenteUno.id, cursoId: curso.id, materiaId: materiaEtica.id, schoolId: school.id });
+  await DocenteCursoMateria.create({ usuarioId: docenteUno.id, cursoId: curso.id, materiaId: materiaSociales.id, schoolId: school.id });
+  await DocenteCursoMateria.create({ usuarioId: docenteDos.id, cursoId: curso.id, materiaId: materiaEtica.id, schoolId: school.id });
+
+  const createRes = await request(app)
+    .post('/estudiantes')
+    .set('Authorization', `Bearer ${teacherToken}`)
+    .send({
+      nombres: 'Valeria',
+      apellidos: 'Mora',
+      qr: `QR-VALERIA-${Date.now()}`,
+      cursoId: curso.id,
+      materias: ['Etica', 'Sociales']
+    });
+
+  expect(createRes.status).toBe(201);
+
+  const updateRes = await request(app)
+    .put(`/estudiantes/${createRes.body.id}`)
+    .set('Authorization', `Bearer ${secondTeacherToken}`)
+    .send({ nombres: 'Valeria', apellidos: 'Mora', qr: createRes.body.qr, materias: ['Etica'] });
 
   expect(updateRes.status).toBe(403);
   expect(updateRes.body).toEqual({ error: 'No autorizado' });
@@ -1555,13 +1594,118 @@ test('Rechaza asistencia si curso no corresponde al estudiante', async () => {
   expect(res.body).toEqual({ error: 'El estudiante no pertenece al curso indicado' });
 });
 
+test('Escanear ausentes permite filtrar por materia del curso', async () => {
+  const docente = await Usuario.findOne({ where: { email: 'docente@demo.com' } });
+  const materiaEtica = await Materia.create({ nombre: 'Etica', schoolId: school.id });
+  await DocenteCursoMateria.create({
+    usuarioId: docente.id,
+    cursoId: curso.id,
+    materiaId: materiaEtica.id,
+    schoolId: school.id
+  });
+  await EstudianteMateria.create({
+    estudianteId: studentA.id,
+    cursoId: curso.id,
+    materiaId: materiaEtica.id,
+    schoolId: school.id
+  });
+
+  const ausentesRes = await request(app)
+    .get(`/asistencias/ausentes?cursoId=${curso.id}&fecha=2025-01-10&materia=Etica`)
+    .set('Authorization', `Bearer ${teacherToken}`);
+
+  expect(ausentesRes.status).toBe(200);
+  expect(ausentesRes.body.materia).toBe('Etica');
+  expect(ausentesRes.body.ausentes.map((item) => item.id)).toEqual([studentA.id]);
+
+  const invalidScanRes = await registrarAsistencia(teacherToken, {
+    qr: studentB.qr,
+    cursoId: curso.id,
+    fecha: '2025-01-10',
+    estado: 'ausente',
+    materia: 'Etica'
+  });
+
+  expect(invalidScanRes.status).toBe(400);
+  expect(invalidScanRes.body).toEqual({ error: 'El estudiante no pertenece a la materia seleccionada' });
+
+  const validScanRes = await registrarAsistencia(teacherToken, {
+    qr: studentA.qr,
+    cursoId: curso.id,
+    fecha: '2025-01-10',
+    estado: 'ausente',
+    materia: 'Etica'
+  });
+
+  expect(validScanRes.status).toBe(201);
+  expect(validScanRes.body.registro.estudianteId).toBe(studentA.id);
+  expect(validScanRes.body.registro.materiaId).toBe(materiaEtica.id);
+});
+
+test('Permite registrar asistencias del mismo estudiante en la misma fecha si son materias distintas', async () => {
+  const docente = await Usuario.findOne({ where: { email: 'docente@demo.com' } });
+  const materiaEtica = await Materia.create({ nombre: 'Etica', schoolId: school.id });
+  const materiaSociales = await Materia.create({ nombre: 'Sociales', schoolId: school.id });
+
+  await DocenteCursoMateria.create({
+    usuarioId: docente.id,
+    cursoId: curso.id,
+    materiaId: materiaEtica.id,
+    schoolId: school.id
+  });
+  await DocenteCursoMateria.create({
+    usuarioId: docente.id,
+    cursoId: curso.id,
+    materiaId: materiaSociales.id,
+    schoolId: school.id
+  });
+  await EstudianteMateria.create({
+    estudianteId: studentA.id,
+    cursoId: curso.id,
+    materiaId: materiaEtica.id,
+    schoolId: school.id
+  });
+  await EstudianteMateria.create({
+    estudianteId: studentA.id,
+    cursoId: curso.id,
+    materiaId: materiaSociales.id,
+    schoolId: school.id
+  });
+
+  const first = await registrarAsistencia(teacherToken, {
+    qr: studentA.qr,
+    cursoId: curso.id,
+    fecha: '2025-01-10',
+    estado: 'ausente',
+    materia: 'Etica'
+  });
+  const second = await registrarAsistencia(teacherToken, {
+    qr: studentA.qr,
+    cursoId: curso.id,
+    fecha: '2025-01-10',
+    estado: 'afuera',
+    materia: 'Sociales'
+  });
+
+  expect(first.status).toBe(201);
+  expect(second.status).toBe(201);
+  expect(first.body.registro.id).not.toBe(second.body.registro.id);
+
+  const registrosDb = await Asistencia.findAll({
+    where: { estudianteId: studentA.id, cursoId: curso.id, fecha: '2025-01-10', schoolId: school.id },
+    order: [['materiaId', 'ASC']]
+  });
+  expect(registrosDb).toHaveLength(2);
+  expect(registrosDb.map((item) => item.materiaId).sort((a, b) => a - b)).toEqual([materiaEtica.id, materiaSociales.id].sort((a, b) => a - b));
+});
+
 test('Previene duplicados de asistencia en misma fecha', async () => {
   const payload = { qr: studentA.qr, cursoId: curso.id, fecha: '2025-01-10', presente: true };
   const first = await registrarAsistencia(teacherToken, payload);
   expect(first.status).toBe(201);
   const dup = await registrarAsistencia(teacherToken, payload);
   expect(dup.status).toBe(409);
-  expect(dup.body).toEqual({ error: 'Ya existe registro para este estudiante/curso/fecha' });
+  expect(dup.body).toEqual({ error: 'Ya existe registro para este estudiante/curso/materia/fecha' });
 });
 
 test('Resumen calcula porcentajes y alertas de inasistencia', async () => {
@@ -1593,7 +1737,7 @@ test('Exporta CSV de asistencias', async () => {
 
   expect(res.status).toBe(200);
   expect(res.headers['content-type']).toContain('text/csv');
-  expect(res.text).toMatch(/fecha,cursoId,periodoId,estudianteId,estudiante,presente/);
+  expect(res.text).toMatch(/fecha,horaRegistro,cursoId,periodoId,estudianteId,estudiante,materiaId,materia,estado,presente/);
   expect(res.text).toContain(studentA.id.toString());
 });
 
@@ -1697,6 +1841,76 @@ test('Reporte de inasistencia por curso devuelve detalle del dia y resumen del m
   expect(res.body.estudiantesConMasFaltas).toEqual(expect.arrayContaining([
     expect.objectContaining({ estudianteId: studentA.id, afuera: 1, inasistencias: 1 }),
     expect.objectContaining({ estudianteId: studentB.id, ausente: 1, inasistencias: 1 })
+  ]));
+});
+
+test('Reporte de inasistencia por curso agrupa por estudiante y dia aunque tenga varias materias', async () => {
+  const docente = await Usuario.findOne({ where: { email: 'docente@demo.com' } });
+  const materiaEtica = await Materia.create({ nombre: 'Etica', schoolId: school.id });
+  const materiaSociales = await Materia.create({ nombre: 'Sociales', schoolId: school.id });
+
+  await DocenteCursoMateria.create({
+    usuarioId: docente.id,
+    cursoId: curso.id,
+    materiaId: materiaEtica.id,
+    schoolId: school.id
+  });
+  await DocenteCursoMateria.create({
+    usuarioId: docente.id,
+    cursoId: curso.id,
+    materiaId: materiaSociales.id,
+    schoolId: school.id
+  });
+  await EstudianteMateria.create({
+    estudianteId: studentA.id,
+    cursoId: curso.id,
+    materiaId: materiaEtica.id,
+    schoolId: school.id
+  });
+  await EstudianteMateria.create({
+    estudianteId: studentA.id,
+    cursoId: curso.id,
+    materiaId: materiaSociales.id,
+    schoolId: school.id
+  });
+
+  await registrarAsistencia(teacherToken, {
+    qr: studentA.qr,
+    cursoId: curso.id,
+    fecha: '2025-01-10',
+    estado: 'ausente',
+    materia: 'Etica'
+  });
+  await registrarAsistencia(teacherToken, {
+    qr: studentA.qr,
+    cursoId: curso.id,
+    fecha: '2025-01-10',
+    estado: 'afuera',
+    materia: 'Sociales'
+  });
+
+  const res = await request(app)
+    .get(`/reportes/curso-inasistencias?cursoId=${curso.id}&mes=2025-01&fecha=2025-01-10`)
+    .set('Authorization', `Bearer ${coordinadorToken}`);
+
+  expect(res.status).toBe(200);
+  expect(res.body.detalleDia.totalInasistencias).toBe(2);
+  expect(res.body.detalleDia.totalAfuera).toBe(0);
+  expect(res.body.detalleDia.totalAusentes).toBe(1);
+  expect(res.body.detalleDia.estudiantes).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: studentA.id,
+      estadoActual: 'ausente',
+      materias: expect.arrayContaining([
+        expect.objectContaining({ materia: 'Etica', estadoActual: 'ausente' }),
+        expect.objectContaining({ materia: 'Sociales', estadoActual: 'afuera' })
+      ])
+    }),
+    expect.objectContaining({ id: studentB.id, estadoActual: null })
+  ]));
+  expect(res.body.resumenMes.inasistencias).toBe(1);
+  expect(res.body.estudiantesConMasFaltas).toEqual(expect.arrayContaining([
+    expect.objectContaining({ estudianteId: studentA.id, inasistencias: 1, ausente: 1, afuera: 0 })
   ]));
 });
 

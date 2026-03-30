@@ -3,7 +3,7 @@ import request from 'supertest';
 import bcrypt from 'bcrypt';
 import { init } from '../src/app.js';
 import { sequelize } from '../src/config/database.js';
-import { Usuario, Colegio, Curso, Estudiante, Periodo } from '../src/models/index.js';
+import { Usuario, Colegio, Curso, CursoDocente, DocenteCursoMateria, Estudiante, EstudianteMateria, Materia, Periodo } from '../src/models/index.js';
 
 let app;
 let adminToken;
@@ -33,7 +33,7 @@ beforeEach(async () => {
     rol: 'admin',
     schoolId: school.id
   });
-  await Usuario.create({
+  const docente = await Usuario.create({
     nombre: 'Docente',
     email: 'docente@uj.com',
     passwordHash: await bcrypt.hash('doc123', 10),
@@ -44,6 +44,10 @@ beforeEach(async () => {
   cursoBase = await Curso.create({ nombre: 'Matematicas', schoolId: school.id });
   periodo = await Periodo.create({ nombre: 'P1', fechaInicio: '2025-01-01', fechaFin: '2025-01-31', schoolId: school.id });
   student = await Estudiante.create({ nombres: 'Ana', apellidos: 'Tester', qr: 'UJ-ANA', cursoId: cursoBase.id });
+  const materia = await Materia.create({ nombre: 'General', schoolId: school.id });
+  await CursoDocente.create({ usuarioId: docente.id, cursoId: cursoBase.id, schoolId: school.id });
+  await DocenteCursoMateria.create({ usuarioId: docente.id, cursoId: cursoBase.id, materiaId: materia.id, schoolId: school.id });
+  await EstudianteMateria.create({ estudianteId: student.id, cursoId: cursoBase.id, materiaId: materia.id, schoolId: school.id });
 
   adminToken = await login('admin@uj.com', 'admin123');
   teacherToken = await login('docente@uj.com', 'doc123');

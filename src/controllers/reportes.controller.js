@@ -1,9 +1,11 @@
 // Exporta CSV y genera reportes analiticos de asistencias con scope por colegio.
 import { Op } from 'sequelize';
-import { Asistencia, Estudiante, Curso, Periodo } from '../models/index.js';
+import { Asistencia, Estudiante, Curso, Periodo, Materia, CursoDocente, DocenteCursoMateria } from '../models/index.js';
 import { toCSV } from '../utils/csv.js';
+import { aggregateAttendanceRowsByStudentDate, normalizeEstadoAsistencia } from '../utils/asistenciaAggregation.js';
 
 const ABSENCE_STATES = new Set(['ausente', 'afuera']);
+const isDocente = (req) => req.user?.rol === 'docente';
 
 const normalizedSchoolId = (value) => {
   const n = Number(value);
@@ -38,14 +40,12 @@ const formatISODateUTC = (date) => {
   return date.toISOString().slice(0, 10);
 };
 
-const normalizeEstado = (registro) => {
-  const estado = String(registro?.estado || '').trim().toLowerCase();
-  if (estado) return estado;
-  if (registro?.ausente === true) return 'ausente';
-  if (registro?.afuera === true) return 'afuera';
-  if (registro?.tarde === true) return 'tarde';
-  return registro?.presente === false ? 'ausente' : 'presente';
-};
+const normalizeEstado = (registro) => normalizeEstadoAsistencia(registro);
+const normalizeMateriaKey = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '');
 
 const buildEmptyCounter = () => ({
   registros: 0,
@@ -159,17 +159,82 @@ const buildMonthRange = (monthKey) => {
   };
 };
 
-const buildStudentDayStatus = (student, estadoActual) => ({
+const buildStudentDayStatus = (student, estadoActual, materias = []) => ({
   id: student.id,
   nombres: student.nombres,
   apellidos: student.apellidos,
   codigoEstudiante: student.codigoEstudiante || null,
-  estadoActual: estadoActual || null
+  estadoActual: estadoActual || null,
+  materias: Array.isArray(materias) ? materias : []
 });
+const getDocenteMateriaRowsForCurso = async (req, cursoId, schoolId) => {
+  if (!isDocente(req)) return [];
+  const assignedCourse = await CursoDocente.findOne({
+    where: {
+      usuarioId: req.user.id,
+      cursoId: Number(cursoId),
+      schoolId: Number(schoolId)
+    },
+    attributes: ['cursoId']
+  });
+  if (!assignedCourse) return null;
+  const rows = await DocenteCursoMateria.findAll({
+    where: {
+      usuarioId: req.user.id,
+      cursoId: Number(cursoId),
+      schoolId: Number(schoolId)
+    },
+    include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }]
+  });
+  const seen = new Set();
+  return rows.filter((item) => {
+    const materiaId = Number(item?.materiaId || item?.materia?.id);
+    if (!Number.isInteger(materiaId) || materiaId <= 0 || seen.has(materiaId)) return false;
+    seen.add(materiaId);
+    return true;
+  });
+};
+const resolveMateriaRowsForCurso = async ({ req, cursoId, schoolId } = {}) => {
+  if (isDocente(req)) {
+    return getDocenteMateriaRowsForCurso(req, cursoId, schoolId);
+  }
+  const rows = await DocenteCursoMateria.findAll({
+    where: {
+      cursoId: Number(cursoId),
+      schoolId: Number(schoolId)
+    },
+    include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }]
+  });
+  const seen = new Set();
+  return rows.filter((item) => {
+    const materiaId = Number(item?.materiaId || item?.materia?.id);
+    if (!Number.isInteger(materiaId) || materiaId <= 0 || seen.has(materiaId)) return false;
+    seen.add(materiaId);
+    return true;
+  });
+};
+const resolveRequestedMateriaForCurso = async ({ req, cursoId, schoolId, materiaNombre = '' } = {}) => {
+  const rows = await resolveMateriaRowsForCurso({ req, cursoId, schoolId });
+  if (rows === null) return { rows: null, materia: null, error: 'No autorizado' };
+  const materiaValue = String(materiaNombre || '').trim();
+  if (!materiaValue) return { rows, materia: null, error: '' };
+  const key = normalizeMateriaKey(materiaValue);
+  const match = rows.find((item) => normalizeMateriaKey(item?.materia?.nombre) === key);
+  if (!match) return { rows, materia: null, error: 'Materia no valida para el curso' };
+  return {
+    rows,
+    materia: {
+      id: Number(match?.materiaId || match?.materia?.id),
+      nombre: String(match?.materia?.nombre || '').trim()
+    },
+    error: ''
+  };
+};
 
 /** Genera CSV de asistencias para un curso y periodo del colegio del usuario. */
 export async function exportarCSV(req, res) {
   const { cursoId, periodoId } = req.query;
+  const materiaNombre = String(req.query?.materia || '').trim();
   if (!cursoId || !periodoId) return res.status(400).json({ error: 'cursoId y periodoId son requeridos' });
 
   const curso = await Curso.findOne({
@@ -181,14 +246,48 @@ export async function exportarCSV(req, res) {
   const schoolId = curso.schoolId;
   const periodo = await Periodo.findOne({ where: { id: periodoId, schoolId } });
   if (!periodo) return res.status(404).json({ error: 'Periodo no encontrado' });
+  const materiaScope = await resolveRequestedMateriaForCurso({
+    req,
+    cursoId,
+    schoolId,
+    materiaNombre
+  });
+  if (materiaScope.error) {
+    return res.status(materiaScope.error === 'No autorizado' ? 403 : 400).json({ error: materiaScope.error });
+  }
 
-  const registros = await Asistencia.findAll({ where: { cursoId, periodoId, schoolId }, include: [Estudiante] });
+  const where = { cursoId, periodoId, schoolId };
+  if (materiaScope.materia) {
+    where.materiaId = materiaScope.materia.id;
+  } else if (isDocente(req)) {
+    const docenteMateriaIds = materiaScope.rows
+      .map((item) => Number(item?.materiaId || item?.materia?.id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    if (docenteMateriaIds.length > 0) {
+      where.materiaId = { [Op.in]: docenteMateriaIds };
+    } else {
+      where.materiaId = null;
+    }
+  }
+
+  const registros = await Asistencia.findAll({
+    where,
+    include: [
+      Estudiante,
+      { model: Materia, as: 'materia', attributes: ['id', 'nombre'], required: false }
+    ],
+    order: [['fecha', 'ASC'], ['horaRegistro', 'ASC'], ['estudianteId', 'ASC']]
+  });
   const rows = registros.map((r) => ({
     fecha: r.fecha,
+    horaRegistro: r.horaRegistro,
     cursoId: r.cursoId,
     periodoId: r.periodoId,
     estudianteId: r.estudianteId,
     estudiante: r.estudiante ? `${r.estudiante.nombres} ${r.estudiante.apellidos}` : '',
+    materiaId: r.materiaId || null,
+    materia: r.materia?.nombre || '',
+    estado: normalizeEstado(r),
     presente: r.presente ? 'SI' : 'NO'
   }));
 
@@ -217,6 +316,7 @@ export async function obtenerDashboardReportes(req, res) {
     attributes: [
       'id',
       'fecha',
+      'materiaId',
       'estado',
       'presente',
       'tarde',
@@ -232,6 +332,10 @@ export async function obtenerDashboardReportes(req, res) {
     }],
     order: [['fecha', 'ASC'], ['cursoId', 'ASC'], ['id', 'ASC']]
   });
+  const registrosAgrupados = aggregateAttendanceRowsByStudentDate(registros);
+  const courseNameById = new Map(
+    registros.map((registro) => [Number(registro?.cursoId), String(registro?.curso?.nombre || `Curso ${registro?.cursoId}`)])
+  );
 
   const totals = buildEmptyCounter();
   const absentStudentIds = new Set();
@@ -242,11 +346,11 @@ export async function obtenerDashboardReportes(req, res) {
   const byMonth = new Map();
   const courseMap = new Map();
 
-  registros.forEach((registro) => {
+  registrosAgrupados.forEach((registro) => {
     const estado = normalizeEstado(registro);
     const fecha = String(registro.fecha);
     const cursoId = Number(registro.cursoId);
-    const cursoNombre = String(registro?.curso?.nombre || `Curso ${cursoId}`);
+    const cursoNombre = courseNameById.get(cursoId) || `Curso ${cursoId}`;
     const fechaDate = parseISODateUTC(fecha);
 
     addEstadoToCounter(totals, estado);
@@ -399,16 +503,18 @@ export async function obtenerReporteInasistenciaCurso(req, res) {
         [Op.lt]: monthRange.endExclusiveDate
       }
     },
-    attributes: ['fecha', 'estado', 'presente', 'tarde', 'afuera', 'ausente', 'estudianteId'],
+    attributes: ['fecha', 'estado', 'presente', 'tarde', 'afuera', 'ausente', 'estudianteId', 'cursoId', 'materiaId'],
+    include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'], required: false }],
     order: [['fecha', 'ASC'], ['estudianteId', 'ASC']]
   });
+  const asistenciasAgrupadas = aggregateAttendanceRowsByStudentDate(asistenciasMes, { includeMateriaDetails: true });
 
   const resumenMes = buildEmptyCounter();
   const diasMap = new Map();
   const estudiantesMap = new Map();
   const diasConRegistro = new Set();
 
-  asistenciasMes.forEach((registro) => {
+  asistenciasAgrupadas.forEach((registro) => {
     const estado = normalizeEstado(registro);
     const fechaRegistro = String(registro.fecha);
     diasConRegistro.add(fechaRegistro);
@@ -434,10 +540,10 @@ export async function obtenerReporteInasistenciaCurso(req, res) {
     estudiantesMap.set(estudianteId, currentStudent);
   });
 
-  const estadoPorEstudianteDia = new Map(
-    asistenciasMes
+  const detallePorEstudianteDia = new Map(
+    asistenciasAgrupadas
       .filter((registro) => String(registro.fecha) === fecha)
-      .map((registro) => [Number(registro.estudianteId), normalizeEstado(registro)])
+      .map((registro) => [Number(registro.estudianteId), registro])
   );
 
   const detalleDia = {
@@ -450,7 +556,8 @@ export async function obtenerReporteInasistenciaCurso(req, res) {
   };
 
   estudiantes.forEach((estudiante) => {
-    const estadoActual = estadoPorEstudianteDia.get(Number(estudiante.id)) || null;
+    const detalleEstudiante = detallePorEstudianteDia.get(Number(estudiante.id)) || null;
+    const estadoActual = detalleEstudiante?.estado || null;
     const esInasistencia = !estadoActual || estadoActual === 'ausente' || estadoActual === 'afuera';
     if (!esInasistencia) return;
 
@@ -458,7 +565,11 @@ export async function obtenerReporteInasistenciaCurso(req, res) {
     if (!estadoActual) detalleDia.totalSinRegistro += 1;
     else if (estadoActual === 'afuera') detalleDia.totalAfuera += 1;
     else detalleDia.totalAusentes += 1;
-    detalleDia.estudiantes.push(buildStudentDayStatus(estudiante, estadoActual));
+    detalleDia.estudiantes.push(buildStudentDayStatus(
+      estudiante,
+      estadoActual,
+      detalleEstudiante?.materias || []
+    ));
   });
 
   const estudiantesById = new Map(

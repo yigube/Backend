@@ -121,15 +121,20 @@ const filterVisibleEstudiantesForDocente = async ({ req, schoolId = getUserSchoo
   const materiaLinksFiltrados = [];
   materiaLinksByEstudiante.forEach((rows, estudianteId) => {
     const hasRows = rows.length > 0;
-    const docenteCubreTodasLasMaterias = hasRows && rows.every((link) => {
+    const docenteComparteAlgunaMateria = hasRows && rows.some((link) => {
       const cursoId = Number(link?.cursoId);
       const materiaId = Number(link?.materiaId);
       const materiaIds = materiaIdsByCurso.get(cursoId);
       return Boolean(materiaIds && materiaIds.has(materiaId));
     });
-    if (!docenteCubreTodasLasMaterias) return;
+    if (!docenteComparteAlgunaMateria) return;
     estudianteIdsVisibles.add(estudianteId);
-    materiaLinksFiltrados.push(...rows);
+    materiaLinksFiltrados.push(...rows.filter((link) => {
+      const cursoId = Number(link?.cursoId);
+      const materiaId = Number(link?.materiaId);
+      const materiaIds = materiaIdsByCurso.get(cursoId);
+      return Boolean(materiaIds && materiaIds.has(materiaId));
+    }));
   });
 
   return {

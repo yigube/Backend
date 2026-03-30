@@ -37,7 +37,8 @@ export const qrRules = [
   body('tarde').optional().isBoolean(),
   body('afuera').optional().isBoolean(),
   body('ausente').optional().isBoolean(),
-  body('estado').optional().isIn(['presente', 'tarde', 'afuera', 'ausente'])
+  body('estado').optional().isIn(['presente', 'tarde', 'afuera', 'ausente']),
+  body('materia').optional({ values: 'falsy' }).isString().notEmpty().isLength({ max: 255 })
 ];
 
 export const crearCursoRules = [
@@ -103,13 +104,20 @@ export const resumenRules = [
 
 export const ausentesRules = [
   query('cursoId').isInt({ min: 1 }),
-  query('fecha').optional().isISO8601()
+  query('fecha').optional().isISO8601(),
+  query('materia').optional({ values: 'falsy' }).isString().notEmpty().isLength({ max: 255 })
 ];
 
 export const reporteCursoInasistenciasRules = [
   query('cursoId').isInt({ min: 1 }),
   query('mes').matches(/^\d{4}-\d{2}$/).withMessage('mes invalido'),
   query('fecha').isISO8601().withMessage('fecha invalida')
+];
+
+export const exportarCsvRules = [
+  query('cursoId').isInt({ min: 1 }),
+  query('periodoId').isInt({ min: 1 }),
+  query('materia').optional({ values: 'falsy' }).isString().notEmpty().isLength({ max: 255 })
 ];
 
 const codigoDaneRule = body('codigoDane')
