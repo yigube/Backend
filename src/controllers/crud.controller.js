@@ -41,7 +41,12 @@ const normalizedIds = (values) => {
   });
   return Array.from(set);
 };
-const normalizeMateriasPorCurso = (value) => {
+const normalizeMateriaKey = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '');
+const normalizeMateriasPorCurso = (value, { includeEmpty = false } = {}) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const result = {};
 
@@ -58,17 +63,19 @@ const normalizeMateriasPorCurso = (value) => {
       return;
     }
 
-    const uniqueMaterias = Array.from(
-      new Set(
-        materiasList
-          .map((item) => String(item || '').trim())
-          .filter(Boolean)
-      )
-    );
+    const uniqueMaterias = [];
+    const seenKeys = new Set();
+    materiasList
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .forEach((nombre) => {
+        const key = normalizeMateriaKey(nombre);
+        if (!key || seenKeys.has(key)) return;
+        seenKeys.add(key);
+        uniqueMaterias.push(nombre);
+      });
 
-    if (uniqueMaterias.length > 0) {
-      result[cursoId] = uniqueMaterias;
-    }
+    if (includeEmpty || uniqueMaterias.length > 0) result[cursoId] = uniqueMaterias;
   });
 
   return result;
@@ -101,13 +108,26 @@ const mapMateriasToDocentesCursos = (docentes = [], materiaLinks = []) => {
     };
   });
 };
-const syncMateriasDocente = async ({ docenteId, schoolId, cursoIds = [], materiasPorCurso = {} }) => {
+const syncMateriasDocente = async ({
+  docenteId,
+  schoolId,
+  cursoIds = [],
+  materiasPorCurso = {},
+  preserveUnspecifiedCourses = false,
+  transaction
+} = {}) => {
   const hasLegacyMateriumId = Object.prototype.hasOwnProperty.call(DocenteCursoMateria.rawAttributes || {}, 'materiumId');
   const cursoIdsValidos = normalizedIds(cursoIds);
-  const materiasNormalizadas = normalizeMateriasPorCurso(materiasPorCurso);
+  const materiasNormalizadas = normalizeMateriasPorCurso(materiasPorCurso, {
+    includeEmpty: preserveUnspecifiedCourses
+  });
+  const cursosProvistos = preserveUnspecifiedCourses
+    ? normalizedIds(Object.keys(materiasPorCurso || {}))
+        .filter((cursoId) => cursoIdsValidos.includes(cursoId))
+    : cursoIdsValidos;
 
   if (cursoIdsValidos.length === 0) {
-    await DocenteCursoMateria.destroy({ where: { usuarioId: docenteId, schoolId } });
+    await DocenteCursoMateria.destroy({ where: { usuarioId: docenteId, schoolId }, transaction });
     return;
   }
 
@@ -116,11 +136,14 @@ const syncMateriasDocente = async ({ docenteId, schoolId, cursoIds = [], materia
       usuarioId: docenteId,
       schoolId,
       cursoId: { [Op.notIn]: cursoIdsValidos }
-    }
+    },
+    transaction
   });
 
+  if (!cursosProvistos.length) return;
+
   const desiredPairs = [];
-  cursoIdsValidos.forEach((cursoId) => {
+  cursosProvistos.forEach((cursoId) => {
     const materias = materiasNormalizadas[cursoId] || [];
     materias.forEach((nombre) => {
       desiredPairs.push({ cursoId, nombre });
@@ -131,36 +154,44 @@ const syncMateriasDocente = async ({ docenteId, schoolId, cursoIds = [], materia
     where: {
       usuarioId: docenteId,
       schoolId,
-      cursoId: { [Op.in]: cursoIdsValidos }
-    }
+      cursoId: { [Op.in]: cursosProvistos }
+    },
+    transaction
   });
 
   if (!desiredPairs.length) return;
 
   const uniqueNames = Array.from(new Set(desiredPairs.map((item) => item.nombre)));
+  const targetKeys = new Set(uniqueNames.map((name) => normalizeMateriaKey(name)));
   const existingMaterias = await Materia.findAll({
-    where: { schoolId, nombre: { [Op.in]: uniqueNames } },
-    attributes: ['id', 'nombre']
+    where: { schoolId },
+    attributes: ['id', 'nombre'],
+    transaction
   });
-  const existingNames = new Set(existingMaterias.map((item) => item.nombre));
-  const missingNames = uniqueNames.filter((name) => !existingNames.has(name));
+  const existingKeys = new Set(existingMaterias.map((item) => normalizeMateriaKey(item.nombre)));
+  const missingNames = uniqueNames.filter((name) => !existingKeys.has(normalizeMateriaKey(name)));
 
   if (missingNames.length) {
     await Materia.bulkCreate(
       missingNames.map((nombre) => ({ nombre, schoolId })),
-      { ignoreDuplicates: true }
+      { ignoreDuplicates: true, transaction }
     );
   }
 
-  const materias = await Materia.findAll({
-    where: { schoolId, nombre: { [Op.in]: uniqueNames } },
-    attributes: ['id', 'nombre']
+  const materias = (await Materia.findAll({
+    where: { schoolId },
+    attributes: ['id', 'nombre'],
+    transaction
+  })).filter((item) => targetKeys.has(normalizeMateriaKey(item.nombre)));
+  const materiaIdByName = new Map();
+  materias.forEach((item) => {
+    const key = normalizeMateriaKey(item.nombre);
+    if (!materiaIdByName.has(key)) materiaIdByName.set(key, Number(item.id));
   });
-  const materiaIdByName = new Map(materias.map((item) => [item.nombre, Number(item.id)]));
 
   const links = desiredPairs
     .map((pair) => {
-      const materiaId = materiaIdByName.get(pair.nombre);
+      const materiaId = materiaIdByName.get(normalizeMateriaKey(pair.nombre));
       const link = {
         usuarioId: docenteId,
         cursoId: pair.cursoId,
@@ -174,7 +205,7 @@ const syncMateriasDocente = async ({ docenteId, schoolId, cursoIds = [], materia
     .filter((item) => Number.isInteger(item.materiaId) && item.materiaId > 0);
 
   if (links.length) {
-    await DocenteCursoMateria.bulkCreate(links, { ignoreDuplicates: true });
+    await DocenteCursoMateria.bulkCreate(links, { ignoreDuplicates: true, transaction });
   }
 };
 const cleanupUnusedMaterias = async ({ schoolIds = [], transaction } = {}) => {
@@ -208,6 +239,74 @@ const normalizeOptionalText = (value) => {
   if (value === undefined || value === null) return null;
   const v = String(value).trim();
   return v || null;
+};
+const getPeriodoComparableValue = (value) => {
+  if (value instanceof Date) {
+    const year = value.getUTCFullYear();
+    const month = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(value.getUTCDate()).padStart(2, '0');
+    const hour = String(value.getUTCHours()).padStart(2, '0');
+    const minute = String(value.getUTCMinutes()).padStart(2, '0');
+    const second = String(value.getUTCSeconds()).padStart(2, '0');
+    return Number(`${year}${month}${day}${hour}${minute}${second}`);
+  }
+
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (match) {
+    const [, year, month, day, hour = '00', minute = '00', second = '00'] = match;
+    return Number(`${year}${month}${day}${hour}${minute}${second}`);
+  }
+
+  const parsed = new Date(text);
+  if (!Number.isFinite(parsed.getTime())) return Number.NaN;
+  return getPeriodoComparableValue(parsed);
+};
+const getPeriodoDateRangeError = (fechaInicio, fechaFin) => {
+  const startValue = getPeriodoComparableValue(fechaInicio);
+  const endValue = getPeriodoComparableValue(fechaFin);
+  if (!Number.isFinite(startValue) || !Number.isFinite(endValue)) return 'Las fechas del periodo no son validas';
+  if (startValue >= endValue) return 'La fecha de inicio debe ser anterior a la fecha de fin';
+  return '';
+};
+const getPeriodoSequenceError = async ({ schoolId, fechaInicio, fechaFin, excludePeriodoId = null, enforceAfterLast = false } = {}) => {
+  const startValue = getPeriodoComparableValue(fechaInicio);
+  const endValue = getPeriodoComparableValue(fechaFin);
+  if (!Number.isFinite(startValue) || !Number.isFinite(endValue) || !schoolId) return '';
+
+  const where = { schoolId };
+  if (excludePeriodoId) where.id = { [Op.ne]: excludePeriodoId };
+
+  const otherPeriodos = await Periodo.findAll({
+    where,
+    attributes: ['id', 'nombre', 'fechaInicio', 'fechaFin'],
+    order: [['fechaInicio', 'ASC'], ['id', 'ASC']]
+  });
+
+  if (!otherPeriodos.length) return '';
+
+  const overlapping = otherPeriodos.find((item) => {
+    const itemStart = getPeriodoComparableValue(item.fechaInicio);
+    const itemEnd = getPeriodoComparableValue(item.fechaFin);
+    return startValue <= itemEnd && endValue >= itemStart;
+  });
+  if (overlapping) {
+    return `Las fechas se cruzan con ${overlapping.nombre}. Un periodo posterior debe iniciar despues de que termine el anterior`;
+  }
+
+  if (enforceAfterLast) {
+    const latestPeriodo = otherPeriodos.reduce((latest, current) => {
+      const latestEnd = getPeriodoComparableValue(latest.fechaFin);
+      const currentEnd = getPeriodoComparableValue(current.fechaFin);
+      return currentEnd > latestEnd ? current : latest;
+    }, otherPeriodos[0]);
+    const latestEnd = getPeriodoComparableValue(latestPeriodo.fechaFin);
+    if (startValue <= latestEnd) {
+      return `El nuevo periodo debe iniciar despues de que termine ${latestPeriodo.nombre || 'el ultimo periodo registrado'}`;
+    }
+  }
+
+  return '';
 };
 const mapUniqueConstraintMessage = (e) => {
   const paths = Array.isArray(e?.errors) ? e.errors.map((err) => String(err.path || '').toLowerCase()) : [];
@@ -592,6 +691,15 @@ export async function listarCursosPorColegio(req, res) {
 export async function crearPeriodo(req, res){
   const schoolId = ensureManagedSchoolId(req, res, req.body.schoolId);
   if (!schoolId) return;
+  const rangeError = getPeriodoDateRangeError(req.body.fechaInicio, req.body.fechaFin);
+  if (rangeError) return res.status(400).json({ error: rangeError });
+  const sequenceError = await getPeriodoSequenceError({
+    schoolId,
+    fechaInicio: req.body.fechaInicio,
+    fechaFin: req.body.fechaFin,
+    enforceAfterLast: true
+  });
+  if (sequenceError) return res.status(400).json({ error: sequenceError });
   const obj = await Periodo.create({ ...req.body, schoolId });
   res.status(201).json(obj);
 }
@@ -601,7 +709,10 @@ export async function listarPeriodos(req, res){
   const schoolId = canManageAcrossSchools(req)
     ? (normalizedSchoolId(req.query.schoolId) || getUserSchoolId(req))
     : getUserSchoolId(req);
-  res.json(await Periodo.findAll({ where: schoolId ? { schoolId } : {} }));
+  res.json(await Periodo.findAll({
+    where: schoolId ? { schoolId } : {},
+    order: [['fechaInicio', 'ASC'], ['id', 'ASC']]
+  }));
 }
 
 /** Actualiza datos de un periodo dentro del mismo colegio. */
@@ -614,6 +725,17 @@ export async function actualizarPeriodo(req, res){
   if (!periodo) return res.status(404).json({ error: 'Periodo no encontrado' });
 
   const { nombre, fechaInicio, fechaFin } = req.body;
+  const nextFechaInicio = fechaInicio || periodo.fechaInicio;
+  const nextFechaFin = fechaFin || periodo.fechaFin;
+  const rangeError = getPeriodoDateRangeError(nextFechaInicio, nextFechaFin);
+  if (rangeError) return res.status(400).json({ error: rangeError });
+  const sequenceError = await getPeriodoSequenceError({
+    schoolId: periodo.schoolId,
+    fechaInicio: nextFechaInicio,
+    fechaFin: nextFechaFin,
+    excludePeriodoId: periodo.id
+  });
+  if (sequenceError) return res.status(400).json({ error: sequenceError });
   if (nombre) periodo.nombre = nombre;
   if (fechaInicio) periodo.fechaInicio = fechaInicio;
   if (fechaFin) periodo.fechaFin = fechaFin;
@@ -792,7 +914,8 @@ export async function crearDocente(req, res) {
     docenteId: docente.id,
     schoolId,
     cursoIds: cursoIdsNormalizados,
-    materiasPorCurso
+    materiasPorCurso,
+    preserveUnspecifiedCourses: false
   });
 
   const cursosDocente = await docente.getCursos({ attributes: ['id', 'nombre'] });
@@ -816,32 +939,59 @@ export async function actualizarDocente(req, res) {
   if (!docente) return res.status(404).json({ error: 'Docente no encontrado' });
 
   // Roles de gestion pueden mover al docente de colegio.
-  const targetSchoolId = canManageAcrossSchools(req) && bodySchool ? bodySchool : docente.schoolId;
-
-  if (nombre) docente.nombre = nombre;
-  if (email) docente.email = email;
-  if (password) docente.passwordHash = await bcrypt.hash(password, 10);
-  docente.schoolId = targetSchoolId;
-  await docente.save();
-
-  if (Array.isArray(cursoIds)) {
-    const cursoIdsNormalizados = normalizedIds(cursoIds);
-    const cursos = await Curso.findAll({ where: { id: { [Op.in]: cursoIdsNormalizados }, schoolId: targetSchoolId } });
-    if (cursos.length !== cursoIdsNormalizados.length) {
-      return res.status(400).json({ error: 'Uno o mas cursos no pertenecen al colegio seleccionado' });
-    }
-    await docente.setCursos(cursos, { through: { schoolId: targetSchoolId } });
-  }
-
-  const cursosDocente = await docente.getCursos({ attributes: ['id', 'nombre'] });
+  const previousSchoolId = normalizedSchoolId(docente.schoolId);
+  const targetSchoolId = canManageAcrossSchools(req) && bodySchool
+    ? (normalizedSchoolId(bodySchool) || docente.schoolId)
+    : docente.schoolId;
   const hasMateriasPayload = req.body.materiasPorCurso && typeof req.body.materiasPorCurso === 'object';
-  if (Array.isArray(cursoIds) || hasMateriasPayload) {
-    await syncMateriasDocente({
-      docenteId: docente.id,
-      schoolId: targetSchoolId,
-      cursoIds: cursosDocente.map((curso) => Number(curso.id)),
-      materiasPorCurso
+  const schoolIdsToCleanup = normalizedIds([previousSchoolId, targetSchoolId]);
+  let cursosDocente = [];
+
+  try {
+    await sequelize.transaction(async (transaction) => {
+      if (nombre) docente.nombre = nombre;
+      if (email) docente.email = email;
+      if (password) docente.passwordHash = await bcrypt.hash(password, 10);
+      docente.schoolId = targetSchoolId;
+      await docente.save({ transaction });
+
+      if (Array.isArray(cursoIds)) {
+        const cursoIdsNormalizados = normalizedIds(cursoIds);
+        const cursos = await Curso.findAll({
+          where: { id: { [Op.in]: cursoIdsNormalizados }, schoolId: targetSchoolId },
+          transaction
+        });
+        if (cursos.length !== cursoIdsNormalizados.length) {
+          throw new Error('Uno o mas cursos no pertenecen al colegio seleccionado');
+        }
+        await docente.setCursos(cursos, { through: { schoolId: targetSchoolId }, transaction });
+      }
+
+      if (previousSchoolId && previousSchoolId !== targetSchoolId) {
+        await DocenteCursoMateria.destroy({
+          where: { usuarioId: docente.id, schoolId: previousSchoolId },
+          transaction
+        });
+      }
+
+      cursosDocente = await docente.getCursos({ attributes: ['id', 'nombre'], transaction });
+      if (Array.isArray(cursoIds) || hasMateriasPayload || previousSchoolId !== targetSchoolId) {
+        await syncMateriasDocente({
+          docenteId: docente.id,
+          schoolId: targetSchoolId,
+          cursoIds: cursosDocente.map((curso) => Number(curso.id)),
+          materiasPorCurso,
+          preserveUnspecifiedCourses: true,
+          transaction
+        });
+        await cleanupUnusedMaterias({ schoolIds: schoolIdsToCleanup, transaction });
+      }
     });
+  } catch (error) {
+    if (error?.message === 'Uno o mas cursos no pertenecen al colegio seleccionado') {
+      return res.status(400).json({ error: error.message });
+    }
+    throw error;
   }
 
   const materiaLinks = await DocenteCursoMateria.findAll({

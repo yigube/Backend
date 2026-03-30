@@ -319,6 +319,89 @@ test('Coordinador solo gestiona su colegio y puede activar periodos propios', as
   expect(createPeriodo.body.schoolId).toBe(school.id);
 });
 
+test('No permite crear un periodo con fecha de inicio igual o posterior a la fecha de fin', async () => {
+  const res = await request(app)
+    .post('/periodos')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Periodo Invalido',
+      fechaInicio: '2025-03-10T00:00:00',
+      fechaFin: '2025-03-10T00:00:00',
+      schoolId: school.id
+    });
+
+  expect(res.status).toBe(400);
+  expect(res.body).toEqual({ error: 'La fecha de inicio debe ser anterior a la fecha de fin' });
+});
+
+test('No permite crear un nuevo periodo con fechas anteriores al ultimo periodo registrado', async () => {
+  const res = await request(app)
+    .post('/periodos')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Periodo 2',
+      fechaInicio: '2024-12-01T00:00:00',
+      fechaFin: '2024-12-31T23:59:00',
+      schoolId: school.id
+    });
+
+  expect(res.status).toBe(400);
+  expect(res.body).toEqual({ error: 'El nuevo periodo debe iniciar despues de que termine P1' });
+});
+
+test('No permite crear un periodo que se cruce con otro ya registrado', async () => {
+  const res = await request(app)
+    .post('/periodos')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Periodo 2',
+      fechaInicio: '2025-01-15T00:00:00',
+      fechaFin: '2025-02-15T23:59:00',
+      schoolId: school.id
+    });
+
+  expect(res.status).toBe(400);
+  expect(res.body).toEqual({ error: 'Las fechas se cruzan con P1. Un periodo posterior debe iniciar despues de que termine el anterior' });
+});
+
+test('No permite actualizar un periodo si la fecha de inicio queda posterior a la fecha de fin', async () => {
+  const res = await request(app)
+    .put(`/periodos/${periodo.id}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      fechaInicio: '2025-02-10T00:00:00'
+    });
+
+  expect(res.status).toBe(400);
+  expect(res.body).toEqual({ error: 'La fecha de inicio debe ser anterior a la fecha de fin' });
+
+  await periodo.reload();
+  expect(new Date(periodo.fechaInicio).toISOString().slice(0, 10)).toBe('2025-01-01');
+});
+
+test('No permite actualizar un periodo para cruzarse con otro periodo del mismo colegio', async () => {
+  const segundoPeriodo = await Periodo.create({
+    nombre: 'P2',
+    fechaInicio: '2025-02-01T00:00:00',
+    fechaFin: '2025-02-28T23:59:00',
+    schoolId: school.id
+  });
+
+  const res = await request(app)
+    .put(`/periodos/${segundoPeriodo.id}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      fechaInicio: '2025-01-20T00:00:00',
+      fechaFin: '2025-02-28T23:59:00'
+    });
+
+  expect(res.status).toBe(400);
+  expect(res.body).toEqual({ error: 'Las fechas se cruzan con P1. Un periodo posterior debe iniciar despues de que termine el anterior' });
+
+  await segundoPeriodo.reload();
+  expect(new Date(segundoPeriodo.fechaInicio).toISOString().slice(0, 10)).toBe('2025-02-01');
+});
+
 test('Admin crea docente y asigna cursos del colegio seleccionado', async () => {
   const res = await request(app)
     .post('/docentes')
@@ -335,6 +418,40 @@ test('Admin crea docente y asigna cursos del colegio seleccionado', async () => 
   expect(res.body.schoolId).toBe(school.id);
   expect(Array.isArray(res.body.cursos)).toBe(true);
   expect(res.body.cursos.map((c) => c.id)).toEqual([curso.id]);
+});
+
+test('Admin no puede crear docente con nombre que no sea solo texto', async () => {
+  const res = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente 123',
+      email: 'docente.texto@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id]
+    });
+
+  expect(res.status).toBe(422);
+  expect(Array.isArray(res.body.errors)).toBe(true);
+  expect(res.body.errors.some((item) => item.msg === 'El nombre solo puede contener letras y espacios')).toBe(true);
+});
+
+test('Admin no puede crear docente con correo invalido', async () => {
+  const res = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Valido',
+      email: 'correo-invalido',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id]
+    });
+
+  expect(res.status).toBe(422);
+  expect(Array.isArray(res.body.errors)).toBe(true);
+  expect(res.body.errors.some((item) => item.msg === 'Email invalido')).toBe(true);
 });
 
 test('Admin crea docente con materias en multiples cursos y las lista completas', async () => {
@@ -461,6 +578,52 @@ test('Admin crea docente con 4 materias en un curso y se insertan completas en b
   expect((docente.cursos[0].materias || []).sort()).toEqual([...materiasEsperadas].sort());
 });
 
+test('Admin puede asignar la misma materia al mismo docente en cursos distintos', async () => {
+  const cursoDos = await Curso.create({ nombre: '10 01', schoolId: school.id });
+
+  const createRes = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Misma Materia',
+      email: 'docente.misma.materia@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id, cursoDos.id],
+      materiasPorCurso: {
+        [curso.id]: ['Matematicas'],
+        [cursoDos.id]: ['Matematicas']
+      }
+    });
+
+  expect(createRes.status).toBe(201);
+  expect(createRes.body.cursos).toHaveLength(2);
+
+  const byCurso = new Map((createRes.body.cursos || []).map((item) => [item.id, item.materias || []]));
+  expect(byCurso.get(curso.id)).toEqual(['Matematicas']);
+  expect(byCurso.get(cursoDos.id)).toEqual(['Matematicas']);
+
+  const docenteDb = await Usuario.findOne({ where: { email: 'docente.misma.materia@demo.com' } });
+  expect(docenteDb).toBeTruthy();
+
+  const materiasDb = await Materia.findAll({ where: { schoolId: school.id }, order: [['nombre', 'ASC']] });
+  expect(materiasDb.map((item) => item.nombre)).toEqual(['Matematicas']);
+
+  const materiaLinks = await DocenteCursoMateria.findAll({
+    where: { usuarioId: docenteDb.id, schoolId: school.id },
+    include: [{ model: Materia, as: 'materia', attributes: ['nombre'] }],
+    order: [['cursoId', 'ASC']]
+  });
+  expect(materiaLinks).toHaveLength(2);
+  expect(materiaLinks.map((row) => ({
+    cursoId: row.cursoId,
+    nombre: row.materia?.nombre
+  }))).toEqual([
+    { cursoId: curso.id, nombre: 'Matematicas' },
+    { cursoId: cursoDos.id, nombre: 'Matematicas' }
+  ]);
+});
+
 test('Admin actualiza docente y persiste todas las materias en multiples cursos', async () => {
   const cursoDos = await Curso.create({ nombre: '10', schoolId: school.id });
   const cursoTres = await Curso.create({ nombre: '11', schoolId: school.id });
@@ -542,6 +705,334 @@ test('Admin actualiza docente y persiste todas las materias en multiples cursos'
   expect(listedByCurso.get(curso.id)).toEqual(['A']);
   expect(listedByCurso.get(cursoDos.id)).toEqual(['B']);
   expect(listedByCurso.get(cursoTres.id)).toEqual(['C']);
+});
+
+test('Admin actualiza materias de un docente y elimina materias huerfanas del catalogo', async () => {
+  const createRes = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Reemplazo Materia',
+      email: 'docente.reemplazo@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id],
+      materiasPorCurso: {
+        [curso.id]: ['A']
+      }
+    });
+
+  expect(createRes.status).toBe(201);
+  const docenteId = createRes.body.id;
+
+  const updateRes = await request(app)
+    .put(`/docentes/${docenteId}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Reemplazo Materia',
+      email: 'docente.reemplazo@demo.com',
+      schoolId: school.id,
+      cursoIds: [curso.id],
+      materiasPorCurso: {
+        [curso.id]: ['Ac']
+      }
+    });
+
+  expect(updateRes.status).toBe(200);
+  expect(updateRes.body.cursos).toHaveLength(1);
+  expect(updateRes.body.cursos[0].materias).toEqual(['Ac']);
+
+  const materiasDb = await Materia.findAll({
+    where: { schoolId: school.id },
+    order: [['nombre', 'ASC']]
+  });
+  expect(materiasDb.map((item) => item.nombre)).toEqual(['Ac']);
+
+  const materiaLinks = await DocenteCursoMateria.findAll({
+    where: { usuarioId: docenteId, schoolId: school.id },
+    include: [{ model: Materia, as: 'materia', attributes: ['nombre'] }]
+  });
+  expect(materiaLinks).toHaveLength(1);
+  expect(materiaLinks[0].materia?.nombre).toBe('Ac');
+});
+
+test('Admin actualiza materias y conserva las materias compartidas por otros docentes', async () => {
+  const createUno = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Compartido Uno',
+      email: 'docente.compartido1@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id],
+      materiasPorCurso: {
+        [curso.id]: ['A']
+      }
+    });
+  const createDos = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Compartido Dos',
+      email: 'docente.compartido2@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id],
+      materiasPorCurso: {
+        [curso.id]: ['A']
+      }
+    });
+
+  expect(createUno.status).toBe(201);
+  expect(createDos.status).toBe(201);
+
+  const updateRes = await request(app)
+    .put(`/docentes/${createUno.body.id}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Compartido Uno',
+      email: 'docente.compartido1@demo.com',
+      schoolId: school.id,
+      cursoIds: [curso.id],
+      materiasPorCurso: {
+        [curso.id]: ['Ac']
+      }
+    });
+
+  expect(updateRes.status).toBe(200);
+
+  const materiasDb = await Materia.findAll({
+    where: { schoolId: school.id },
+    order: [['nombre', 'ASC']]
+  });
+  expect(materiasDb.map((item) => item.nombre)).toEqual(['A', 'Ac']);
+
+  const linksDocenteUno = await DocenteCursoMateria.findAll({
+    where: { usuarioId: createUno.body.id, schoolId: school.id },
+    include: [{ model: Materia, as: 'materia', attributes: ['nombre'] }]
+  });
+  const linksDocenteDos = await DocenteCursoMateria.findAll({
+    where: { usuarioId: createDos.body.id, schoolId: school.id },
+    include: [{ model: Materia, as: 'materia', attributes: ['nombre'] }]
+  });
+  expect(linksDocenteUno).toHaveLength(1);
+  expect(linksDocenteDos).toHaveLength(1);
+  expect(linksDocenteUno[0].materia?.nombre).toBe('Ac');
+  expect(linksDocenteDos[0].materia?.nombre).toBe('A');
+});
+
+test('Admin actualiza docente sin enviar una materia y conserva la materia existente de ese curso', async () => {
+  const cursoDos = await Curso.create({ nombre: '10 01', schoolId: school.id });
+  const cursoTres = await Curso.create({ nombre: '11 01', schoolId: school.id });
+
+  const createRes = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Conserva Materia',
+      email: 'docente.conserva@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id, cursoDos.id, cursoTres.id],
+      materiasPorCurso: {
+        [curso.id]: ['Etica'],
+        [cursoDos.id]: ['Fisica'],
+        [cursoTres.id]: ['Quimica']
+      }
+    });
+
+  expect(createRes.status).toBe(201);
+  const docenteId = createRes.body.id;
+
+  const updateRes = await request(app)
+    .put(`/docentes/${docenteId}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Conserva Materia',
+      email: 'docente.conserva@demo.com',
+      schoolId: school.id,
+      cursoIds: [curso.id, cursoDos.id, cursoTres.id],
+      materiasPorCurso: {
+        [curso.id]: ['Etica'],
+        [cursoDos.id]: ['Fisica']
+      }
+    });
+
+  expect(updateRes.status).toBe(200);
+  const updatedByCurso = new Map((updateRes.body.cursos || []).map((item) => [item.id, item.materias || []]));
+  expect(updatedByCurso.get(curso.id)).toEqual(['Etica']);
+  expect(updatedByCurso.get(cursoDos.id)).toEqual(['Fisica']);
+  expect(updatedByCurso.get(cursoTres.id)).toEqual(['Quimica']);
+});
+
+test('Admin actualiza cursos de un docente sin materiasPorCurso y preserva sus materias actuales', async () => {
+  const cursoDos = await Curso.create({ nombre: '10 01', schoolId: school.id });
+
+  const createRes = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Sin Payload Materias',
+      email: 'docente.sinpayload@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id, cursoDos.id],
+      materiasPorCurso: {
+        [curso.id]: ['Etica'],
+        [cursoDos.id]: ['Fisica']
+      }
+    });
+
+  expect(createRes.status).toBe(201);
+  const docenteId = createRes.body.id;
+
+  const updateRes = await request(app)
+    .put(`/docentes/${docenteId}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Sin Payload Materias',
+      email: 'docente.sinpayload@demo.com',
+      schoolId: school.id,
+      cursoIds: [curso.id, cursoDos.id]
+    });
+
+  expect(updateRes.status).toBe(200);
+  const updatedByCurso = new Map((updateRes.body.cursos || []).map((item) => [item.id, item.materias || []]));
+  expect(updatedByCurso.get(curso.id)).toEqual(['Etica']);
+  expect(updatedByCurso.get(cursoDos.id)).toEqual(['Fisica']);
+});
+
+test('Admin puede vaciar una materia enviando arreglo vacio para ese curso', async () => {
+  const cursoDos = await Curso.create({ nombre: '10 01', schoolId: school.id });
+
+  const createRes = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Vacia Materia',
+      email: 'docente.vacia@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id, cursoDos.id],
+      materiasPorCurso: {
+        [curso.id]: ['Etica'],
+        [cursoDos.id]: ['Fisica']
+      }
+    });
+
+  expect(createRes.status).toBe(201);
+  const docenteId = createRes.body.id;
+
+  const updateRes = await request(app)
+    .put(`/docentes/${docenteId}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Vacia Materia',
+      email: 'docente.vacia@demo.com',
+      schoolId: school.id,
+      cursoIds: [curso.id, cursoDos.id],
+      materiasPorCurso: {
+        [curso.id]: ['Etica'],
+        [cursoDos.id]: []
+      }
+    });
+
+  expect(updateRes.status).toBe(200);
+  const updatedByCurso = new Map((updateRes.body.cursos || []).map((item) => [item.id, item.materias || []]));
+  expect(updatedByCurso.get(curso.id)).toEqual(['Etica']);
+  expect(updatedByCurso.get(cursoDos.id)).toEqual([]);
+});
+
+test('Admin actualiza una materia sin tilde y conserva el vinculo con una materia existente con tilde', async () => {
+  const createRes = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Tildes',
+      email: 'docente.tildes@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id],
+      materiasPorCurso: {
+        [curso.id]: ['Filosofía']
+      }
+    });
+
+  expect(createRes.status).toBe(201);
+  const docenteId = createRes.body.id;
+
+  const updateRes = await request(app)
+    .put(`/docentes/${docenteId}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Tildes',
+      email: 'docente.tildes@demo.com',
+      schoolId: school.id,
+      cursoIds: [curso.id],
+      materiasPorCurso: {
+        [curso.id]: ['Filosofia']
+      }
+    });
+
+  expect(updateRes.status).toBe(200);
+  expect(updateRes.body.cursos).toHaveLength(1);
+  expect(updateRes.body.cursos[0].materias).toEqual(['Filosofía']);
+
+  const materiasDb = await Materia.findAll({
+    where: { schoolId: school.id },
+    order: [['nombre', 'ASC']]
+  });
+  expect(materiasDb.map((item) => item.nombre)).toEqual(['Filosofía']);
+
+  const materiaLinks = await DocenteCursoMateria.findAll({
+    where: { usuarioId: docenteId, schoolId: school.id },
+    include: [{ model: Materia, as: 'materia', attributes: ['nombre'] }]
+  });
+  expect(materiaLinks).toHaveLength(1);
+  expect(materiaLinks[0].materia?.nombre).toBe('Filosofía');
+});
+
+test('Admin crea un docente usando una materia sin tilde y reutiliza la materia existente con tilde', async () => {
+  const existingRes = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Base Tildes',
+      email: 'docente.base.tildes@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id],
+      materiasPorCurso: {
+        [curso.id]: ['Filosofía']
+      }
+    });
+
+  expect(existingRes.status).toBe(201);
+
+  const createRes = await request(app)
+    .post('/docentes')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Docente Reutiliza Tildes',
+      email: 'docente.reutiliza.tildes@demo.com',
+      password: 'doc1234',
+      schoolId: school.id,
+      cursoIds: [curso.id],
+      materiasPorCurso: {
+        [curso.id]: ['Filosofia']
+      }
+    });
+
+  expect(createRes.status).toBe(201);
+  expect(createRes.body.cursos).toHaveLength(1);
+  expect(createRes.body.cursos[0].materias).toEqual(['Filosofía']);
+
+  const materiasDb = await Materia.findAll({
+    where: { schoolId: school.id },
+    order: [['nombre', 'ASC']]
+  });
+  expect(materiasDb.map((item) => item.nombre)).toEqual(['Filosofía']);
 });
 
 test('Admin elimina docente y borra en cascada sus cursos y materias asignadas', async () => {
@@ -775,4 +1266,69 @@ test('Exporta CSV de asistencias', async () => {
   expect(res.headers['content-type']).toContain('text/csv');
   expect(res.text).toMatch(/fecha,cursoId,periodoId,estudianteId,estudiante,presente/);
   expect(res.text).toContain(studentA.id.toString());
+});
+
+test('Dashboard de reportes agrupa inasistencias por dia, semana y mes y detecta el curso mas critico', async () => {
+  const cursoDos = await Curso.create({ nombre: '10 01', schoolId: school.id });
+  const studentC = await Estudiante.create({ nombres: 'Mia', apellidos: 'Rios', qr: 'QR-MIA-3', cursoId: cursoDos.id });
+  const studentD = await Estudiante.create({ nombres: 'Teo', apellidos: 'Ruiz', qr: 'QR-TEO-4', cursoId: cursoDos.id });
+
+  await registrarAsistencia(teacherToken, { qr: studentA.qr, cursoId: curso.id, fecha: '2025-01-06', presente: true });
+  await registrarAsistencia(teacherToken, { qr: studentB.qr, cursoId: curso.id, fecha: '2025-01-06', presente: false });
+  await registrarAsistencia(teacherToken, { qr: studentC.qr, cursoId: cursoDos.id, fecha: '2025-01-13', presente: false });
+  await registrarAsistencia(teacherToken, {
+    qr: studentD.qr,
+    cursoId: cursoDos.id,
+    fecha: '2025-01-13',
+    estado: 'afuera'
+  });
+
+  const res = await request(app)
+    .get(`/reportes/dashboard?periodoId=${periodo.id}`)
+    .set('Authorization', `Bearer ${coordinadorToken}`);
+
+  expect(res.status).toBe(200);
+  expect(res.body.schoolId).toBe(school.id);
+  expect(res.body.periodo.id).toBe(periodo.id);
+  expect(res.body.totals.inasistencias).toBe(3);
+  expect(res.body.totals.cursosConRegistros).toBe(2);
+  expect(res.body.totals.estudiantesConInasistencias).toBe(3);
+  expect(res.body.byDay).toEqual([
+    expect.objectContaining({ fecha: '2025-01-06', inasistencias: 1 }),
+    expect.objectContaining({ fecha: '2025-01-13', inasistencias: 2 })
+  ]);
+  expect(res.body.byWeek).toEqual([
+    expect.objectContaining({ startDate: '2025-01-06', endDate: '2025-01-12', inasistencias: 1 }),
+    expect.objectContaining({ startDate: '2025-01-13', endDate: '2025-01-19', inasistencias: 2 })
+  ]);
+  expect(res.body.byMonth).toEqual([
+    expect.objectContaining({ monthKey: '2025-01', inasistencias: 3 })
+  ]);
+  expect(res.body.worstCourse).toEqual(expect.objectContaining({
+    cursoId: cursoDos.id,
+    cursoNombre: '10 01',
+    inasistencias: 2
+  }));
+  expect(res.body.worstCourse.diasMasFaltas).toEqual([
+    expect.objectContaining({ fecha: '2025-01-13', inasistencias: 2 })
+  ]);
+  expect(res.body.worstDays[0]).toEqual(expect.objectContaining({ fecha: '2025-01-13', inasistencias: 2 }));
+  expect(res.body.highlights.semanaMasCritica).toEqual(expect.objectContaining({
+    startDate: '2025-01-13',
+    endDate: '2025-01-19',
+    inasistencias: 2
+  }));
+  expect(res.body.highlights.mesMasCritico).toEqual(expect.objectContaining({
+    monthKey: '2025-01',
+    inasistencias: 3
+  }));
+});
+
+test('Docente no puede acceder al dashboard de reportes', async () => {
+  const res = await request(app)
+    .get(`/reportes/dashboard?periodoId=${periodo.id}`)
+    .set('Authorization', `Bearer ${teacherToken}`);
+
+  expect(res.status).toBe(403);
+  expect(res.body).toEqual({ error: 'No autorizado' });
 });

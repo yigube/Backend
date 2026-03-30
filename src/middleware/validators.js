@@ -137,6 +137,7 @@ const rectorPasswordRule = body('rectorPassword')
   .optional({ values: 'falsy' })
   .isString().withMessage('Password del rector invalido')
   .isLength({ min: 4, max: 120 }).withMessage('Password del rector invalido');
+const docenteNombreRegex = /^[A-Za-zÁÉÍÓÚáéíóúÑñÜü]+(?:\s+[A-Za-zÁÉÍÓÚáéíóúÑñÜü]+)*$/;
 
 export const crearColegioRules = [
   body('nombre').isString().withMessage('Nombre del colegio invalido').notEmpty().withMessage('Nombre del colegio invalido'),
@@ -168,7 +169,11 @@ export const listarCursosColegioRules = [
 ];
 
 export const crearDocenteRules = [
-  body('nombre').isString().notEmpty().withMessage('Nombre requerido'),
+  body('nombre')
+    .isString().withMessage('Nombre requerido')
+    .trim()
+    .notEmpty().withMessage('Nombre requerido')
+    .matches(docenteNombreRegex).withMessage('El nombre solo puede contener letras y espacios'),
   body('email').isEmail().withMessage('Email invalido'),
   body('password').isString().isLength({ min: 4 }).withMessage('Password invalido'),
   body('cursoIds').optional().isArray(),
@@ -179,7 +184,12 @@ export const crearDocenteRules = [
 
 export const actualizarDocenteRules = [
   param('id').isInt({ min: 1 }),
-  body('nombre').optional().isString().notEmpty().withMessage('Nombre invalido'),
+  body('nombre')
+    .optional()
+    .isString().withMessage('Nombre invalido')
+    .trim()
+    .notEmpty().withMessage('Nombre invalido')
+    .matches(docenteNombreRegex).withMessage('El nombre solo puede contener letras y espacios'),
   body('email').optional().isEmail().withMessage('Email invalido'),
   body('password').optional().isString().isLength({ min: 4 }).withMessage('Password invalido'),
   body('cursoIds').optional().isArray(),

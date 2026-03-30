@@ -53,6 +53,10 @@ Materia.init({
 
 export class DocenteCursoMateria extends Model {}
 DocenteCursoMateria.init({
+  id: { type: DataTypes.INTEGER, allowNull: false, autoIncrement: true, primaryKey: true },
+  usuarioId: { type: DataTypes.INTEGER, allowNull: false },
+  cursoId: { type: DataTypes.INTEGER, allowNull: false },
+  materiaId: { type: DataTypes.INTEGER, allowNull: false },
   schoolId: { type: DataTypes.INTEGER, allowNull: false }
 }, {
   sequelize,
@@ -102,31 +106,6 @@ Usuario.belongsToMany(Curso, { through: CursoDocente, as: 'cursos' });
 
 Colegio.hasMany(Materia, { foreignKey: { allowNull: false, name: 'schoolId' } });
 Materia.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
-
-Curso.belongsToMany(Materia, {
-  through: DocenteCursoMateria,
-  as: 'materias',
-  foreignKey: 'cursoId',
-  otherKey: 'materiaId'
-});
-Materia.belongsToMany(Curso, {
-  through: DocenteCursoMateria,
-  as: 'cursos',
-  foreignKey: 'materiaId',
-  otherKey: 'cursoId'
-});
-Usuario.belongsToMany(Materia, {
-  through: DocenteCursoMateria,
-  as: 'materias',
-  foreignKey: 'usuarioId',
-  otherKey: 'materiaId'
-});
-Materia.belongsToMany(Usuario, {
-  through: DocenteCursoMateria,
-  as: 'docentes',
-  foreignKey: 'materiaId',
-  otherKey: 'usuarioId'
-});
 
 Curso.hasMany(DocenteCursoMateria, { foreignKey: { allowNull: false, name: 'cursoId' } });
 Usuario.hasMany(DocenteCursoMateria, { foreignKey: { allowNull: false, name: 'usuarioId' } });
