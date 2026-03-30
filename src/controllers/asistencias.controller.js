@@ -1,10 +1,11 @@
 // Controlador de asistencias: registra desde QR y entrega resumen por curso/periodo.
 import { Op } from 'sequelize';
-import { Asistencia, Estudiante, Curso, Periodo } from '../models/index.js';
+import { Asistencia, Estudiante, Curso, Periodo, CursoDocente, DocenteCursoMateria, EstudianteMateria } from '../models/index.js';
 import { calcularPorcentajeInasistencia } from '../utils/calc.js';
 
 const ESTADOS_ASISTENCIA = ['presente', 'tarde', 'afuera', 'ausente'];
 const isAdmin = (req) => req.user?.rol === 'admin';
+const isDocente = (req) => req.user?.rol === 'docente';
 const estadoACampoPresente = (estado) => estado === 'presente' || estado === 'tarde';
 const flagsDesdeEstado = (estado) => ({
   tarde: estado === 'tarde',
@@ -39,7 +40,77 @@ const resolveCursoForRequest = async (req, cursoId) => {
   const where = isAdmin(req)
     ? { id: cursoId }
     : { id: cursoId, schoolId: req.user.schoolId };
-  return Curso.findOne({ where });
+  const curso = await Curso.findOne({ where });
+  if (!curso) return null;
+  if (!isDocente(req)) return curso;
+
+  const assigned = await CursoDocente.findOne({
+    where: {
+      usuarioId: req.user.id,
+      cursoId: curso.id,
+      schoolId: curso.schoolId
+    },
+    attributes: ['cursoId']
+  });
+  return assigned ? curso : null;
+};
+const getDocenteMateriaIdsForCurso = async (req, cursoId, schoolId) => {
+  if (!isDocente(req)) return new Set();
+  const rows = await DocenteCursoMateria.findAll({
+    where: {
+      usuarioId: req.user.id,
+      cursoId,
+      schoolId
+    },
+    attributes: ['materiaId'],
+    raw: true
+  });
+  return new Set(
+    rows
+      .map((item) => Number(item?.materiaId))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  );
+};
+const docentePuedeVerEstudiante = async (req, estudiante, cursoId, schoolId) => {
+  if (!isDocente(req)) return true;
+  if (!estudiante?.id) return false;
+  const materiaIdsDocente = await getDocenteMateriaIdsForCurso(req, Number(cursoId), Number(schoolId));
+  if (!materiaIdsDocente.size) return false;
+  const rows = await EstudianteMateria.findAll({
+    where: {
+      estudianteId: estudiante.id,
+      cursoId: Number(cursoId),
+      schoolId: Number(schoolId)
+    },
+    attributes: ['materiaId'],
+    raw: true
+  });
+  return rows.some((item) => materiaIdsDocente.has(Number(item?.materiaId)));
+};
+const filtrarEstudiantesVisiblesDocente = async (req, estudiantes, cursoId, schoolId) => {
+  if (!isDocente(req)) return estudiantes;
+  const materiaIdsDocente = await getDocenteMateriaIdsForCurso(req, Number(cursoId), Number(schoolId));
+  if (!materiaIdsDocente.size) return [];
+  const estudianteIds = estudiantes
+    .map((item) => Number(item?.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (!estudianteIds.length) return [];
+  const rows = await EstudianteMateria.findAll({
+    where: {
+      estudianteId: { [Op.in]: estudianteIds },
+      cursoId: Number(cursoId),
+      schoolId: Number(schoolId)
+    },
+    attributes: ['estudianteId', 'materiaId'],
+    raw: true
+  });
+  const estudianteIdsVisibles = new Set(
+    rows
+      .filter((item) => materiaIdsDocente.has(Number(item?.materiaId)))
+      .map((item) => Number(item?.estudianteId))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  );
+  return estudiantes.filter((item) => estudianteIdsVisibles.has(Number(item?.id)));
 };
 
 /** Registra asistencia a partir de un QR validando pertenencia a curso y periodo activo. */
@@ -79,9 +150,14 @@ export async function registrarDesdeQR(req, res) {
   if (Number(estudiante.cursoId) !== Number(cursoId)) {
     return res.status(400).json({ error: 'El estudiante no pertenece al curso indicado' });
   }
+  if (isDocente(req)) {
+    const visible = await docentePuedeVerEstudiante(req, estudiante, cursoId, schoolId);
+    if (!visible) return res.status(403).json({ error: 'No autorizado' });
+  }
 
   const estadoNormalizado = resolverEstado({ estado, presente, tarde, afuera, ausente });
   const flagsEstado = flagsDesdeEstado(estadoNormalizado);
+  const horaRegistro = new Date();
   const existente = await Asistencia.findOne({
     where: { fecha: fechaISO, estudianteId: estudiante.id, cursoId, schoolId }
   });
@@ -101,6 +177,7 @@ export async function registrarDesdeQR(req, res) {
     existente.tarde = flagsEstado.tarde;
     existente.afuera = flagsEstado.afuera;
     existente.ausente = flagsEstado.ausente;
+    existente.horaRegistro = horaRegistro;
     await existente.save();
     try {
       const io = req.app.get('io');
@@ -112,6 +189,7 @@ export async function registrarDesdeQR(req, res) {
   try {
     const registro = await Asistencia.create({
       fecha: fechaISO,
+      horaRegistro,
       estado: estadoNormalizado,
       presente: estado ? estadoACampoPresente(estadoNormalizado) : (presente !== false),
       tarde: flagsEstado.tarde,
@@ -146,9 +224,14 @@ export async function resumenCurso(req, res) {
   const periodo = await Periodo.findOne({ where: { id: periodoId, schoolId } });
   if (!periodo) return res.status(404).json({ error: 'Periodo no encontrado' });
 
-  const estudiantes = await Estudiante.findAll({ where: { cursoId } });
+  const estudiantesBase = await Estudiante.findAll({ where: { cursoId } });
+  const estudiantes = await filtrarEstudiantesVisiblesDocente(req, estudiantesBase, cursoId, schoolId);
+  const estudianteIds = estudiantes.map((item) => item.id);
   const asistencias = await Asistencia.findAll({ where: { cursoId, periodoId, schoolId } });
-  const sesionesRegistradas = new Set(asistencias.map(a => a.fecha)).size;
+  const asistenciasVisibles = isDocente(req)
+    ? asistencias.filter((item) => estudianteIds.includes(item.estudianteId))
+    : asistencias;
+  const sesionesRegistradas = new Set(asistenciasVisibles.map(a => a.fecha)).size;
   // Usa el mayor entre sesiones registradas y el total reportado por el cliente.
   const totalClasesPeriodo = Math.max(
     sesionesRegistradas,
@@ -156,7 +239,7 @@ export async function resumenCurso(req, res) {
   );
 
   const data = estudiantes.map(est => {
-    const asistEst = asistencias.filter(a => a.estudianteId === est.id);
+    const asistEst = asistenciasVisibles.filter(a => a.estudianteId === est.id);
     const presentes = asistEst.filter(a => a.estado === 'presente').length;
     const tardes = asistEst.filter(a => a.estado === 'tarde').length;
     const afuera = asistEst.filter(a => a.estado === 'afuera').length;
@@ -203,17 +286,22 @@ export async function listarAusentesCurso(req, res) {
   }
   const schoolId = curso.schoolId;
 
-  const estudiantes = await Estudiante.findAll({
+  const estudiantesBase = await Estudiante.findAll({
     where: { cursoId },
     order: [['apellidos', 'ASC'], ['nombres', 'ASC']]
   });
+  const estudiantes = await filtrarEstudiantesVisiblesDocente(req, estudiantesBase, cursoId, schoolId);
+  const estudianteIds = estudiantes.map((item) => item.id);
 
   const asistenciasDia = await Asistencia.findAll({
     where: { cursoId, schoolId, fecha: fechaISO },
     attributes: ['estudianteId', 'estado']
   });
+  const asistenciasVisibles = isDocente(req)
+    ? asistenciasDia.filter((item) => estudianteIds.includes(item.estudianteId))
+    : asistenciasDia;
   const asistenciaPorEstudiante = new Map(
-    asistenciasDia.map((item) => [Number(item.estudianteId), item.estado || null])
+    asistenciasVisibles.map((item) => [Number(item.estudianteId), item.estado || null])
   );
 
   const ausentes = estudiantes

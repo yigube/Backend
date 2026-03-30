@@ -73,6 +73,20 @@ Estudiante.init({
   qr: { type: DataTypes.STRING, allowNull: false, unique: true }
 }, { sequelize, modelName: 'estudiante' });
 
+export class EstudianteMateria extends Model {}
+EstudianteMateria.init({
+  id: { type: DataTypes.INTEGER, allowNull: false, autoIncrement: true, primaryKey: true },
+  estudianteId: { type: DataTypes.INTEGER, allowNull: false },
+  cursoId: { type: DataTypes.INTEGER, allowNull: false },
+  materiaId: { type: DataTypes.INTEGER, allowNull: false },
+  schoolId: { type: DataTypes.INTEGER, allowNull: false }
+}, {
+  sequelize,
+  modelName: 'estudiante_materia',
+  tableName: 'estudiante_materias',
+  indexes: [{ unique: true, fields: ['estudiante_id', 'curso_id', 'materia_id', 'school_id'] }]
+});
+
 export class Periodo extends Model {}
 Periodo.init({
   nombre: { type: DataTypes.STRING, allowNull: false }, // Ej. 'P1'
@@ -84,6 +98,7 @@ Periodo.init({
 export class Asistencia extends Model {}
 Asistencia.init({
   fecha: { type: DataTypes.DATEONLY, allowNull: false },
+  horaRegistro: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
   estado: { type: DataTypes.STRING, allowNull: false, defaultValue: 'presente' },
   presente: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   tarde: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
@@ -122,6 +137,15 @@ Periodo.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } 
 Curso.hasMany(Estudiante, { foreignKey: { allowNull: false } });
 Estudiante.belongsTo(Curso);
 
+Curso.hasMany(EstudianteMateria, { foreignKey: { allowNull: false, name: 'cursoId' }, onDelete: 'CASCADE' });
+Estudiante.hasMany(EstudianteMateria, { foreignKey: { allowNull: false, name: 'estudianteId' }, onDelete: 'CASCADE' });
+Materia.hasMany(EstudianteMateria, { foreignKey: { allowNull: false, name: 'materiaId' }, onDelete: 'CASCADE' });
+Colegio.hasMany(EstudianteMateria, { foreignKey: { allowNull: false, name: 'schoolId' }, onDelete: 'CASCADE' });
+EstudianteMateria.belongsTo(Curso, { foreignKey: { allowNull: false, name: 'cursoId' }, onDelete: 'CASCADE' });
+EstudianteMateria.belongsTo(Estudiante, { foreignKey: { allowNull: false, name: 'estudianteId' }, onDelete: 'CASCADE' });
+EstudianteMateria.belongsTo(Materia, { as: 'materia', foreignKey: { allowNull: false, name: 'materiaId' }, onDelete: 'CASCADE' });
+EstudianteMateria.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' }, onDelete: 'CASCADE' });
+
 Curso.hasMany(Asistencia, { foreignKey: { allowNull: false } });
 Asistencia.belongsTo(Curso);
 
@@ -143,6 +167,7 @@ export default {
   Materia,
   DocenteCursoMateria,
   Estudiante,
+  EstudianteMateria,
   Periodo,
   Asistencia,
   sequelize

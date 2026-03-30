@@ -11,7 +11,8 @@ import {
   Colegio,
   Rector,
   Materia,
-  DocenteCursoMateria
+  DocenteCursoMateria,
+  EstudianteMateria
 } from '../models/index.js';
 
 const isDocente = (req) => req.user?.rol === 'docente';
@@ -31,6 +32,135 @@ const ensureManagedSchoolId = (req, res, explicitValue = null) => {
   if (schoolId) return schoolId;
   res.status(400).json({ error: 'schoolId requerido para administradores' });
   return null;
+};
+const getDocenteCursoIds = async ({ req, schoolId = getUserSchoolId(req), transaction } = {}) => {
+  if (!isDocente(req)) return [];
+  const where = { usuarioId: req.user.id };
+  if (schoolId) where.schoolId = schoolId;
+  const rows = await CursoDocente.findAll({
+    where,
+    attributes: ['cursoId'],
+    transaction,
+    raw: true
+  });
+  return Array.from(new Set(
+    rows
+      .map((item) => Number(item?.cursoId))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  ));
+};
+const docenteTieneCursoAsignado = async ({ req, cursoId, schoolId = getUserSchoolId(req), transaction } = {}) => {
+  if (!isDocente(req)) return true;
+  const parsedCursoId = Number(cursoId);
+  if (!Number.isInteger(parsedCursoId) || parsedCursoId <= 0) return false;
+  const where = { usuarioId: req.user.id, cursoId: parsedCursoId };
+  if (schoolId) where.schoolId = schoolId;
+  const assigned = await CursoDocente.findOne({
+    where,
+    attributes: ['cursoId'],
+    transaction
+  });
+  return Boolean(assigned);
+};
+const getDocenteMateriaIdsByCurso = async ({ req, cursoIds = [], schoolId = getUserSchoolId(req), transaction } = {}) => {
+  if (!isDocente(req)) return new Map();
+  const normalizedCursoIds = normalizedIds(cursoIds);
+  if (!normalizedCursoIds.length) return new Map();
+  const where = {
+    usuarioId: req.user.id,
+    cursoId: { [Op.in]: normalizedCursoIds }
+  };
+  if (schoolId) where.schoolId = schoolId;
+  const rows = await DocenteCursoMateria.findAll({
+    where,
+    attributes: ['cursoId', 'materiaId'],
+    transaction,
+    raw: true
+  });
+  const materiaIdsByCurso = new Map();
+  rows.forEach((item) => {
+    const cursoId = Number(item?.cursoId);
+    const materiaId = Number(item?.materiaId);
+    if (!Number.isInteger(cursoId) || cursoId <= 0 || !Number.isInteger(materiaId) || materiaId <= 0) return;
+    if (!materiaIdsByCurso.has(cursoId)) materiaIdsByCurso.set(cursoId, new Set());
+    materiaIdsByCurso.get(cursoId).add(materiaId);
+  });
+  return materiaIdsByCurso;
+};
+const filterVisibleEstudiantesForDocente = async ({ req, schoolId = getUserSchoolId(req), estudiantes = [], transaction } = {}) => {
+  if (!isDocente(req)) return { estudiantes, materiaLinks: [] };
+  const cursoIds = normalizedIds(estudiantes.map((item) => item?.cursoId));
+  if (!cursoIds.length) return { estudiantes: [], materiaLinks: [] };
+
+  const materiaIdsByCurso = await getDocenteMateriaIdsByCurso({ req, cursoIds, schoolId, transaction });
+  if (!materiaIdsByCurso.size) return { estudiantes: [], materiaLinks: [] };
+
+  const estudianteIds = normalizedIds(estudiantes.map((item) => item?.id));
+  if (!estudianteIds.length) return { estudiantes: [], materiaLinks: [] };
+
+  const materiaLinks = await EstudianteMateria.findAll({
+    where: {
+      estudianteId: { [Op.in]: estudianteIds },
+      cursoId: { [Op.in]: cursoIds },
+      ...(schoolId ? { schoolId } : {})
+    },
+    include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }],
+    transaction
+  });
+
+  const materiaLinksByEstudiante = new Map();
+  materiaLinks.forEach((link) => {
+    const estudianteId = Number(link?.estudianteId);
+    if (!Number.isInteger(estudianteId) || estudianteId <= 0) return;
+    const current = materiaLinksByEstudiante.get(estudianteId) || [];
+    current.push(link);
+    materiaLinksByEstudiante.set(estudianteId, current);
+  });
+
+  const estudianteIdsVisibles = new Set();
+  const materiaLinksFiltrados = [];
+  materiaLinksByEstudiante.forEach((rows, estudianteId) => {
+    const hasRows = rows.length > 0;
+    const docenteCubreTodasLasMaterias = hasRows && rows.every((link) => {
+      const cursoId = Number(link?.cursoId);
+      const materiaId = Number(link?.materiaId);
+      const materiaIds = materiaIdsByCurso.get(cursoId);
+      return Boolean(materiaIds && materiaIds.has(materiaId));
+    });
+    if (!docenteCubreTodasLasMaterias) return;
+    estudianteIdsVisibles.add(estudianteId);
+    materiaLinksFiltrados.push(...rows);
+  });
+
+  return {
+    estudiantes: estudiantes.filter((item) => estudianteIdsVisibles.has(Number(item?.id))),
+    materiaLinks: materiaLinksFiltrados
+  };
+};
+const docentePuedeGestionarEstudiante = async ({ req, estudiante, schoolId = getUserSchoolId(req), transaction } = {}) => {
+  if (!isDocente(req)) return true;
+  if (!estudiante?.id || !estudiante?.cursoId) return false;
+  const materiaIdsByCurso = await getDocenteMateriaIdsByCurso({
+    req,
+    cursoIds: [estudiante.cursoId],
+    schoolId,
+    transaction
+  });
+  const materiaIds = materiaIdsByCurso.get(Number(estudiante.cursoId));
+  if (!materiaIds || !materiaIds.size) return false;
+
+  const rows = await EstudianteMateria.findAll({
+    where: {
+      estudianteId: estudiante.id,
+      cursoId: estudiante.cursoId,
+      ...(schoolId ? { schoolId } : {})
+    },
+    attributes: ['materiaId'],
+    transaction,
+    raw: true
+  });
+
+  return rows.length > 0 && rows.every((item) => materiaIds.has(Number(item?.materiaId)));
 };
 const normalizedIds = (values) => {
   if (!Array.isArray(values)) return [];
@@ -78,6 +208,21 @@ const normalizeMateriasPorCurso = (value, { includeEmpty = false } = {}) => {
     if (includeEmpty || uniqueMaterias.length > 0) result[cursoId] = uniqueMaterias;
   });
 
+  return result;
+};
+const normalizeMateriasLista = (value) => {
+  if (!Array.isArray(value)) return [];
+  const result = [];
+  const seen = new Set();
+  value
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .forEach((nombre) => {
+      const key = normalizeMateriaKey(nombre);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      result.push(nombre);
+    });
   return result;
 };
 const mapMateriasToDocentesCursos = (docentes = [], materiaLinks = []) => {
@@ -207,6 +352,100 @@ const syncMateriasDocente = async ({
   if (links.length) {
     await DocenteCursoMateria.bulkCreate(links, { ignoreDuplicates: true, transaction });
   }
+};
+const mapMateriasToEstudiantes = (estudiantes = [], materiaLinks = []) => {
+  const materiasMap = new Map();
+  materiaLinks.forEach((link) => {
+    const estudianteId = Number(link?.estudianteId);
+    const materiaNombre = String(link?.materia?.nombre || '').trim();
+    if (!estudianteId || !materiaNombre) return;
+    const current = materiasMap.get(estudianteId) || [];
+    if (!current.includes(materiaNombre)) current.push(materiaNombre);
+    materiasMap.set(estudianteId, current);
+  });
+
+  return estudiantes.map((estudiante) => {
+    const raw = estudiante?.toJSON ? estudiante.toJSON() : estudiante;
+    return {
+      ...raw,
+      materias: materiasMap.get(Number(raw?.id)) || []
+    };
+  });
+};
+const resolveMateriasSeleccionadasCurso = async ({
+  req,
+  cursoId,
+  schoolId,
+  materias = [],
+  transaction
+} = {}) => {
+  const materiasNormalizadas = normalizeMateriasLista(materias);
+  if (!materiasNormalizadas.length) return [];
+
+  const where = { cursoId, schoolId };
+  if (isDocente(req)) where.usuarioId = req.user.id;
+
+  const materiaLinks = await DocenteCursoMateria.findAll({
+    where,
+    include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }],
+    transaction
+  });
+  const materiaByKey = new Map();
+  materiaLinks.forEach((item) => {
+    const materiaId = Number(item?.materia?.id);
+    const materiaNombre = String(item?.materia?.nombre || '').trim();
+    const key = normalizeMateriaKey(materiaNombre);
+    if (!materiaId || !key || materiaByKey.has(key)) return;
+    materiaByKey.set(key, { id: materiaId, nombre: materiaNombre });
+  });
+
+  const missingMaterias = materiasNormalizadas.filter((nombre) => !materiaByKey.has(normalizeMateriaKey(nombre)));
+  if (missingMaterias.length) {
+    throw new Error('Las materias seleccionadas no corresponden al curso');
+  }
+
+  return materiasNormalizadas
+    .map((nombre) => materiaByKey.get(normalizeMateriaKey(nombre)))
+    .filter(Boolean);
+};
+const syncMateriasEstudiante = async ({
+  req,
+  estudianteIds = [],
+  cursoId,
+  schoolId,
+  materias = [],
+  transaction
+} = {}) => {
+  const ids = normalizedIds(estudianteIds);
+  if (!ids.length) return [];
+
+  await EstudianteMateria.destroy({
+    where: { estudianteId: { [Op.in]: ids } },
+    transaction
+  });
+
+  const materiasSeleccionadas = await resolveMateriasSeleccionadasCurso({
+    req,
+    cursoId,
+    schoolId,
+    materias,
+    transaction
+  });
+  if (!materiasSeleccionadas.length) return [];
+
+  await EstudianteMateria.bulkCreate(
+    ids.flatMap((estudianteId) => (
+      materiasSeleccionadas.map((materia) => ({
+        estudianteId,
+        cursoId,
+        materiaId: materia.id,
+        schoolId
+      }))
+    )),
+    { ignoreDuplicates: true, transaction }
+  );
+
+  return materiasSeleccionadas.map((materia) => materia.nombre);
 };
 const cleanupUnusedMaterias = async ({ schoolIds = [], transaction } = {}) => {
   const schoolIdsNormalizados = normalizedIds(schoolIds);
@@ -482,16 +721,43 @@ export async function crearEstudiante(req, res){
       : { id: req.body.cursoId, schoolId: getUserSchoolId(req) }
   });
   if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
-  try {
-    const obj = await Estudiante.create({
-      nombres: normalizeOptionalText(req.body.nombres),
-      apellidos: normalizeOptionalText(req.body.apellidos),
-      qr: normalizeOptionalText(req.body.qr),
-      codigoEstudiante: normalizeOptionalText(req.body.codigoEstudiante),
-      cursoId: req.body.cursoId
+  if (isDocente(req)) {
+    const assigned = await docenteTieneCursoAsignado({
+      req,
+      cursoId: curso.id,
+      schoolId: Number(curso.schoolId)
     });
-    return res.status(201).json(obj);
+    if (!assigned) return res.status(403).json({ error: 'No autorizado' });
+  }
+  try {
+    const created = await sequelize.transaction(async (transaction) => {
+      const obj = await Estudiante.create({
+        nombres: normalizeOptionalText(req.body.nombres),
+        apellidos: normalizeOptionalText(req.body.apellidos),
+        qr: normalizeOptionalText(req.body.qr),
+        codigoEstudiante: normalizeOptionalText(req.body.codigoEstudiante),
+        cursoId: req.body.cursoId
+      }, { transaction });
+      await syncMateriasEstudiante({
+        req,
+        estudianteIds: [obj.id],
+        cursoId: Number(curso.id),
+        schoolId: Number(curso.schoolId),
+        materias: req.body.materias,
+        transaction
+      });
+      const materiaLinks = await EstudianteMateria.findAll({
+        where: { estudianteId: obj.id },
+        include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }],
+        transaction
+      });
+      return mapMateriasToEstudiantes([obj], materiaLinks)[0];
+    });
+    return res.status(201).json(created);
   } catch (e) {
+    if (e?.message === 'Las materias seleccionadas no corresponden al curso') {
+      return res.status(400).json({ error: e.message });
+    }
     if (e instanceof UniqueConstraintError) {
       return res.status(409).json({ error: mapUniqueConstraintMessage(e) });
     }
@@ -515,6 +781,14 @@ export async function crearEstudiantesLote(req, res) {
       : { id: cursoId, schoolId: getUserSchoolId(req) }
   });
   if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
+  if (isDocente(req)) {
+    const assigned = await docenteTieneCursoAsignado({
+      req,
+      cursoId,
+      schoolId: Number(curso.schoolId)
+    });
+    if (!assigned) return res.status(403).json({ error: 'No autorizado' });
+  }
 
   const payload = rows.map((item, idx) => ({
     row: idx + 1,
@@ -531,16 +805,38 @@ export async function crearEstudiantesLote(req, res) {
   }
 
   try {
-    const created = await Estudiante.bulkCreate(payload.map(({ row, ...rest }) => rest), { validate: true });
-    const createdRows = created.map((item) => ({
-      id: item.id,
-      nombres: item.nombres,
-      apellidos: item.apellidos,
-      qr: item.qr,
-      codigoEstudiante: item.codigoEstudiante
-    }));
-    return res.status(201).json({ created: created.length, students: createdRows });
+    const createdRows = await sequelize.transaction(async (transaction) => {
+      const created = await Estudiante.bulkCreate(payload.map(({ row, ...rest }) => rest), {
+        validate: true,
+        transaction
+      });
+      await syncMateriasEstudiante({
+        req,
+        estudianteIds: created.map((item) => item.id),
+        cursoId,
+        schoolId: Number(curso.schoolId),
+        materias: req.body.materias,
+        transaction
+      });
+      const materiaLinks = await EstudianteMateria.findAll({
+        where: { estudianteId: { [Op.in]: created.map((item) => item.id) } },
+        include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }],
+        transaction
+      });
+      return mapMateriasToEstudiantes(created, materiaLinks).map((item) => ({
+        id: item.id,
+        nombres: item.nombres,
+        apellidos: item.apellidos,
+        qr: item.qr,
+        codigoEstudiante: item.codigoEstudiante,
+        materias: item.materias || []
+      }));
+    });
+    return res.status(201).json({ created: createdRows.length, students: createdRows });
   } catch (e) {
+    if (e?.message === 'Las materias seleccionadas no corresponden al curso') {
+      return res.status(400).json({ error: e.message });
+    }
     if (e instanceof UniqueConstraintError) {
       return res.status(409).json({ error: mapUniqueConstraintMessage(e) });
     }
@@ -553,10 +849,39 @@ export async function listarEstudiantes(req, res){
   // Join con cursos para acotar al colegio del usuario autenticado.
   const querySchoolId = normalizedSchoolId(req.query.schoolId);
   const schoolId = canManageAcrossSchools(req) ? (querySchoolId || getUserSchoolId(req)) : getUserSchoolId(req);
+  const cursoId = normalizedSchoolId(req.query.cursoId);
+  const cursoWhere = {
+    ...(schoolId ? { schoolId } : {})
+  };
+  if (isDocente(req)) {
+    const assignedCursoIds = await getDocenteCursoIds({ req, schoolId });
+    if (!assignedCursoIds.length) return res.json([]);
+    if (cursoId) {
+      if (!assignedCursoIds.includes(cursoId)) {
+        return res.status(403).json({ error: 'No autorizado' });
+      }
+      cursoWhere.id = cursoId;
+    } else {
+      cursoWhere.id = { [Op.in]: assignedCursoIds };
+    }
+  } else if (cursoId) {
+    cursoWhere.id = cursoId;
+  }
   const ests = await Estudiante.findAll({
-    include: { model: Curso, where: schoolId ? { schoolId } : {}, attributes: [] }
+    include: { model: Curso, where: cursoWhere, attributes: [] },
+    order: [['apellidos', 'ASC'], ['nombres', 'ASC']]
   });
-  res.json(ests);
+  if (isDocente(req)) {
+    const visible = await filterVisibleEstudiantesForDocente({ req, schoolId, estudiantes: ests });
+    return res.json(mapMateriasToEstudiantes(visible.estudiantes, visible.materiaLinks));
+  }
+  const materiaLinks = ests.length
+    ? await EstudianteMateria.findAll({
+      where: { estudianteId: { [Op.in]: ests.map((item) => item.id) } },
+      include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }]
+    })
+    : [];
+  res.json(mapMateriasToEstudiantes(ests, materiaLinks));
 }
 
 /** Actualiza datos de un estudiante del colegio del usuario. */
@@ -570,6 +895,14 @@ export async function actualizarEstudiante(req, res) {
     }]
   });
   if (!estudiante) return res.status(404).json({ error: 'Estudiante no encontrado' });
+  if (isDocente(req)) {
+    const assigned = await docentePuedeGestionarEstudiante({
+      req,
+      estudiante,
+      schoolId: Number(estudiante?.curso?.schoolId || getUserSchoolId(req))
+    });
+    if (!assigned) return res.status(403).json({ error: 'No autorizado' });
+  }
 
   if (Object.prototype.hasOwnProperty.call(req.body, 'cursoId')) {
     const nuevoCursoId = Number(req.body.cursoId);
@@ -582,6 +915,14 @@ export async function actualizarEstudiante(req, res) {
         : { id: nuevoCursoId, schoolId: getUserSchoolId(req) }
     });
     if (!cursoDestino) return res.status(404).json({ error: 'Curso no encontrado' });
+    if (isDocente(req)) {
+      const assigned = await docenteTieneCursoAsignado({
+        req,
+        cursoId: nuevoCursoId,
+        schoolId: Number(cursoDestino.schoolId)
+      });
+      if (!assigned) return res.status(403).json({ error: 'No autorizado' });
+    }
     estudiante.cursoId = nuevoCursoId;
   }
 
@@ -599,9 +940,37 @@ export async function actualizarEstudiante(req, res) {
   }
 
   try {
-    await estudiante.save();
-    return res.json(estudiante);
+    const updated = await sequelize.transaction(async (transaction) => {
+      await estudiante.save({ transaction });
+
+      if (Object.prototype.hasOwnProperty.call(req.body, 'materias') || Object.prototype.hasOwnProperty.call(req.body, 'cursoId')) {
+        const cursoActual = await Curso.findByPk(estudiante.cursoId, {
+          attributes: ['id', 'schoolId'],
+          transaction
+        });
+        if (!cursoActual) throw new Error('Curso no encontrado');
+        await syncMateriasEstudiante({
+          req,
+          estudianteIds: [estudiante.id],
+          cursoId: Number(cursoActual.id),
+          schoolId: Number(cursoActual.schoolId),
+          materias: Object.prototype.hasOwnProperty.call(req.body, 'materias') ? req.body.materias : [],
+          transaction
+        });
+      }
+
+      const materiaLinks = await EstudianteMateria.findAll({
+        where: { estudianteId: estudiante.id },
+        include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }],
+        transaction
+      });
+      return mapMateriasToEstudiantes([estudiante], materiaLinks)[0];
+    });
+    return res.json(updated);
   } catch (e) {
+    if (e?.message === 'Las materias seleccionadas no corresponden al curso' || e?.message === 'Curso no encontrado') {
+      return res.status(400).json({ error: e.message });
+    }
     if (e instanceof UniqueConstraintError) {
       return res.status(409).json({ error: mapUniqueConstraintMessage(e) });
     }
@@ -620,7 +989,16 @@ export async function eliminarEstudiante(req, res) {
     }]
   });
   if (!estudiante) return res.status(404).json({ error: 'Estudiante no encontrado' });
+  if (isDocente(req)) {
+    const assigned = await docentePuedeGestionarEstudiante({
+      req,
+      estudiante,
+      schoolId: Number(estudiante?.curso?.schoolId || getUserSchoolId(req))
+    });
+    if (!assigned) return res.status(403).json({ error: 'No autorizado' });
+  }
 
+  await EstudianteMateria.destroy({ where: { estudianteId: estudiante.id } });
   await estudiante.destroy();
   return res.json({ ok: true });
 }

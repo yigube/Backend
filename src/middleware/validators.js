@@ -54,7 +54,9 @@ export const crearEstudianteRules = [
   body('apellidos').isString().notEmpty(),
   body('qr').isString().notEmpty().isLength({ max: 255 }),
   body('codigoEstudiante').optional({ values: 'falsy' }).isString().isLength({ max: 100 }),
-  body('cursoId').isInt({ min: 1 })
+  body('cursoId').isInt({ min: 1 }),
+  body('materias').optional().isArray(),
+  body('materias.*').optional().isString().notEmpty().isLength({ max: 255 })
 ];
 
 export const crearEstudiantesLoteRules = [
@@ -63,7 +65,9 @@ export const crearEstudiantesLoteRules = [
   body('estudiantes.*.nombres').isString().notEmpty(),
   body('estudiantes.*.apellidos').isString().notEmpty(),
   body('estudiantes.*.qr').isString().notEmpty().isLength({ max: 255 }),
-  body('estudiantes.*.codigoEstudiante').optional({ values: 'falsy' }).isString().isLength({ max: 100 })
+  body('estudiantes.*.codigoEstudiante').optional({ values: 'falsy' }).isString().isLength({ max: 100 }),
+  body('materias').optional().isArray(),
+  body('materias.*').optional().isString().notEmpty().isLength({ max: 255 })
 ];
 export const actualizarEstudianteRules = [
   param('id').isInt({ min: 1 }),
@@ -71,7 +75,9 @@ export const actualizarEstudianteRules = [
   body('apellidos').optional().isString().notEmpty(),
   body('qr').optional().isString().notEmpty().isLength({ max: 255 }),
   body('codigoEstudiante').optional({ values: 'falsy' }).isString().isLength({ max: 100 }),
-  body('cursoId').optional().isInt({ min: 1 })
+  body('cursoId').optional().isInt({ min: 1 }),
+  body('materias').optional().isArray(),
+  body('materias.*').optional().isString().notEmpty().isLength({ max: 255 })
 ];
 export const eliminarEstudianteRules = [
   param('id').isInt({ min: 1 })
@@ -98,6 +104,12 @@ export const resumenRules = [
 export const ausentesRules = [
   query('cursoId').isInt({ min: 1 }),
   query('fecha').optional().isISO8601()
+];
+
+export const reporteCursoInasistenciasRules = [
+  query('cursoId').isInt({ min: 1 }),
+  query('mes').matches(/^\d{4}-\d{2}$/).withMessage('mes invalido'),
+  query('fecha').isISO8601().withMessage('fecha invalida')
 ];
 
 const codigoDaneRule = body('codigoDane')
