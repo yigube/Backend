@@ -15,10 +15,11 @@ const normalizeMateriaKey = (value) => String(value || '')
 
 export const normalizeEstadoAsistencia = (registro) => {
   const estado = String(registro?.estado || '').trim().toLowerCase();
+  if (estado === 'ausente' || registro?.ausente === true) return 'ausente';
+  if (estado === 'afuera' || registro?.afuera === true) return 'afuera';
+  if (estado === 'tarde' || registro?.tarde === true) return 'tarde';
+  if (estado === 'presente') return registro?.presente === false ? 'ausente' : 'presente';
   if (estado) return estado;
-  if (registro?.ausente === true) return 'ausente';
-  if (registro?.afuera === true) return 'afuera';
-  if (registro?.tarde === true) return 'tarde';
   return registro?.presente === false ? 'ausente' : 'presente';
 };
 

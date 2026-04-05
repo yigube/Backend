@@ -4,15 +4,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --env-file=.env src/server.js",
+    "dev": "nodemon --watch src --ext js,mjs,cjs,json --exec \"node --env-file=.env src/server.js\"",
     "dev:watch": "node --watch --env-file=.env src/server.js",
-    "dev:nodemon": "nodemon dev",
+    "dev:nodemon": "nodemon --watch src --ext js,mjs,cjs,json --exec \"node --env-file=.env src/server.js\"",
     "start": "node src/server.js",
     "db:seed": "node --env-file=.env src/seeders/seed.js",
+    "db:repair": "node --env-file=.env src/scripts/repair-dev-db.js",
     "db:migrate": "sequelize-cli --config sequelize.config.cjs db:migrate",
     "db:migrate:undo": "sequelize-cli --config sequelize.config.cjs db:migrate:undo",
     "db:migrate:undo:all": "sequelize-cli --config sequelize.config.cjs db:migrate:undo:all",
-    "test": "set NODE_ENV=test&& set DB_NAME_TEST=asistencia_db_test&& node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand"
+    "test": "set NODE_ENV=test&& set DB_NAME_TEST=asistencia_db_test&& node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
+    "test:integration": "set NODE_ENV=test&& set DB_NAME_TEST=asistencia_db_test&& node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand tests/api.test.js tests/system.test.js tests/userJourneys.test.js",
+    "test:acceptance": "set NODE_ENV=test&& set DB_NAME_TEST=asistencia_db_test&& node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand tests/acceptance.test.js",
+    "test:security": "set NODE_ENV=test&& set DB_NAME_TEST=asistencia_db_test&& node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand tests/security.test.js",
+    "test:performance": "set NODE_ENV=test&& set DB_NAME_TEST=asistencia_db_test&& node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand tests/performance.test.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

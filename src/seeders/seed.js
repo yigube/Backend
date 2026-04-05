@@ -1,13 +1,21 @@
-﻿// Seeder de datos de ejemplo multi-colegio para desarrollo.
+// Seeder de datos de ejemplo multi-colegio para desarrollo.
 import bcrypt from 'bcrypt';
-import { sequelize } from '../config/database.js';
+import { dbConfig, sequelize } from '../config/database.js';
+import { recreateMySqlDatabase, runMigrations } from '../config/db-maintenance.js';
 import { Usuario, Curso, Estudiante, Periodo, Colegio } from '../models/index.js';
 
 async function seed() {
-  // Desactiva claves foraneas para poder recrear tablas en orden sin choques.
-  await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
-  await sequelize.sync({ force: true });
-  await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+  if ((process.env.NODE_ENV || 'development') === 'production') {
+    throw new Error('El seeder no se puede ejecutar en produccion.');
+  }
+
+  if (dbConfig.dialect !== 'mysql') {
+    throw new Error('El seeder de desarrollo solo soporta MySQL.');
+  }
+
+  await recreateMySqlDatabase(dbConfig);
+  await sequelize.authenticate();
+  await runMigrations(sequelize);
 
   const colegios = await Promise.all([
     Colegio.create({ nombre: 'Colegio Central' }),
@@ -73,7 +81,7 @@ async function seed() {
     Estudiante.create({ nombres: 'Ana', apellidos: 'Perez', qr: 'QR-ANA-001', cursoId: cursoCentral.id }),
     Estudiante.create({ nombres: 'Luis', apellidos: 'Gomez', qr: 'QR-LUIS-002', cursoId: cursoCentral.id }),
     Estudiante.create({ nombres: 'Sara', apellidos: 'Lopez', qr: 'QR-SARA-003', cursoId: cursoCentral.id }),
-    Estudiante.create({ nombres: 'Marta', apellidos: 'Quinonez', qr: 'QR-MARTA-004', cursoId: cursoNorte.id }),
+    Estudiante.create({ nombres: 'Marta', apellidos: 'Quinonez', qr: 'QR-MARTA-004', cursoId: cursoNorte.id })
   ]);
 
   // 4 periodos de 10 semanas aprox por colegio
@@ -81,7 +89,7 @@ async function seed() {
     { nombre: 'P1', fechaInicio: '2025-02-03', fechaFin: '2025-04-11' },
     { nombre: 'P2', fechaInicio: '2025-04-28', fechaFin: '2025-07-04' },
     { nombre: 'P3', fechaInicio: '2025-07-21', fechaFin: '2025-09-26' },
-    { nombre: 'P4', fechaInicio: '2025-10-06', fechaFin: '2025-12-12' },
+    { nombre: 'P4', fechaInicio: '2025-10-06', fechaFin: '2025-12-12' }
   ];
   for (const colegio of colegios) {
     for (const p of periodosBase) {
@@ -92,4 +100,13 @@ async function seed() {
   console.log('Seed listo. Admins: admin@central.com / admin@norte.com (pass: admin123)');
 }
 
-seed().then(()=> process.exit(0)).catch(e=> { console.error(e); process.exit(1); });
+seed()
+  .then(async () => {
+    await sequelize.close();
+    process.exit(0);
+  })
+  .catch(async (error) => {
+    console.error(error);
+    await sequelize.close().catch(() => {});
+    process.exit(1);
+  });

@@ -17,7 +17,8 @@ Rector.init({
   correo: { type: DataTypes.STRING, allowNull: true, unique: true },
   telefono: { type: DataTypes.STRING, allowNull: true, unique: true },
   cedula: { type: DataTypes.STRING, allowNull: true, unique: true },
-  passwordHash: { type: DataTypes.STRING, allowNull: true }
+  passwordHash: { type: DataTypes.STRING, allowNull: true },
+  mustChangePassword: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false }
 }, { sequelize, modelName: 'rector', tableName: 'rectores' });
 
 export class Usuario extends Model {}
@@ -25,6 +26,7 @@ Usuario.init({
   nombre: { type: DataTypes.STRING, allowNull: false },
   email: { type: DataTypes.STRING, allowNull: false, unique: true },
   passwordHash: { type: DataTypes.STRING, allowNull: false },
+  mustChangePassword: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   rol: { type: DataTypes.ENUM('docente', 'admin', 'rector', 'coordinador'), allowNull: false, defaultValue: 'docente' },
   schoolId: { type: DataTypes.INTEGER, allowNull: true }
 }, { sequelize, modelName: 'usuario' });

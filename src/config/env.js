@@ -19,7 +19,10 @@ export function validateEnv() {
       }
     }
     if (process.env.ALLOW_SYNC_IN_PROD === 'true') {
-      console.warn('ADVERTENCIA: ALLOW_SYNC_IN_PROD habilitado; usa migraciones en su lugar.');
+      console.warn('ADVERTENCIA: ALLOW_SYNC_IN_PROD ya no se usa; el backend arranca sin sync.');
+    }
+    if (process.env.RUN_DB_MIGRATIONS_ON_START === 'true') {
+      console.warn('ADVERTENCIA: RUN_DB_MIGRATIONS_ON_START habilitado; asegura que solo una instancia aplique migraciones al arrancar.');
     }
   }
 

@@ -1,6 +1,7 @@
 // Pruebas unitarias de utilidades puras.
 import { calcularPorcentajeInasistencia } from '../src/utils/calc.js';
 import { toCSV } from '../src/utils/csv.js';
+import { normalizeEstadoAsistencia } from '../src/utils/asistenciaAggregation.js';
 
 describe('calcularPorcentajeInasistencia', () => {
   test('retorna 0% sin clases registradas', () => {
@@ -32,5 +33,12 @@ describe('toCSV', () => {
     expect(csv).toContain('fecha,cursoId,periodoId,estudianteId,estudiante,presente');
     expect(csv).toContain('2025-01-01,1,2,3,Ana Lopez,SI');
     expect(csv).toContain('2025-01-02,1,2,4,Luis Perez,NO');
+  });
+});
+
+describe('normalizeEstadoAsistencia', () => {
+  test('prioriza flags de falta sobre un estado presente heredado', () => {
+    expect(normalizeEstadoAsistencia({ estado: 'presente', ausente: true, presente: false })).toBe('ausente');
+    expect(normalizeEstadoAsistencia({ estado: 'presente', afuera: true, presente: false })).toBe('afuera');
   });
 });

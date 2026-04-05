@@ -1439,6 +1439,144 @@ test('Docente puede listar estudiantes si comparte una parte de las materias del
   expect(estudianteVisible?.materias).toEqual(['Etica']);
 });
 
+test('Docente ve en el listado de estudiantes las fallas acumuladas por materia visible', async () => {
+  const docenteUno = await asignarCursoADocente(curso.id, school.id, 'docente@demo.com');
+  const docenteDos = await asignarCursoADocente(curso.id, school.id, 'docente2@demo.com');
+  const materiaEtica = await Materia.create({ nombre: 'Etica', schoolId: school.id });
+  const materiaSociales = await Materia.create({ nombre: 'Sociales', schoolId: school.id });
+
+  await DocenteCursoMateria.create({ usuarioId: docenteUno.id, cursoId: curso.id, materiaId: materiaEtica.id, schoolId: school.id });
+  await DocenteCursoMateria.create({ usuarioId: docenteUno.id, cursoId: curso.id, materiaId: materiaSociales.id, schoolId: school.id });
+  await DocenteCursoMateria.create({ usuarioId: docenteDos.id, cursoId: curso.id, materiaId: materiaEtica.id, schoolId: school.id });
+
+  const estudiante = await Estudiante.create({
+    nombres: 'Luisa',
+    apellidos: 'Parra',
+    qr: `QR-LUISA-${Date.now()}`,
+    cursoId: curso.id
+  });
+
+  await EstudianteMateria.bulkCreate([
+    { estudianteId: estudiante.id, cursoId: curso.id, materiaId: materiaEtica.id, schoolId: school.id },
+    { estudianteId: estudiante.id, cursoId: curso.id, materiaId: materiaSociales.id, schoolId: school.id }
+  ]);
+
+  await Asistencia.bulkCreate([
+    {
+      fecha: '2025-01-10',
+      estado: 'ausente',
+      ausente: true,
+      presente: false,
+      estudianteId: estudiante.id,
+      cursoId: curso.id,
+      periodoId: periodo.id,
+      schoolId: school.id,
+      materiaId: materiaEtica.id
+    },
+    {
+      fecha: '2025-01-11',
+      estado: 'afuera',
+      afuera: true,
+      presente: false,
+      estudianteId: estudiante.id,
+      cursoId: curso.id,
+      periodoId: periodo.id,
+      schoolId: school.id,
+      materiaId: materiaSociales.id
+    },
+    {
+      fecha: '2025-01-12',
+      estado: 'presente',
+      presente: true,
+      estudianteId: estudiante.id,
+      cursoId: curso.id,
+      periodoId: periodo.id,
+      schoolId: school.id,
+      materiaId: materiaEtica.id
+    }
+  ]);
+
+  const ownerList = await request(app)
+    .get(`/estudiantes?cursoId=${curso.id}`)
+    .set('Authorization', `Bearer ${teacherToken}`);
+
+  expect(ownerList.status).toBe(200);
+  const ownerStudent = ownerList.body.find((item) => item.id === estudiante.id);
+  expect(ownerStudent?.faltas).toEqual({
+    total: 2,
+    ausente: 1,
+    afuera: 1,
+    materias: [
+      { materia: 'Etica', faltas: 1, ausente: 1, afuera: 0 },
+      { materia: 'Sociales', faltas: 1, ausente: 0, afuera: 1 }
+    ]
+  });
+
+  const secondTeacherList = await request(app)
+    .get(`/estudiantes?cursoId=${curso.id}`)
+    .set('Authorization', `Bearer ${secondTeacherToken}`);
+
+  expect(secondTeacherList.status).toBe(200);
+  const secondTeacherStudent = secondTeacherList.body.find((item) => item.id === estudiante.id);
+  expect(secondTeacherStudent?.faltas).toEqual({
+    total: 2,
+    ausente: 1,
+    afuera: 1,
+    materias: [
+      { materia: 'Etica', faltas: 1, ausente: 1, afuera: 0 },
+      { materia: 'Sociales', faltas: 1, ausente: 0, afuera: 1 }
+    ]
+  });
+});
+
+test('Listado de estudiantes cuenta fallas aunque el estado heredado venga como presente', async () => {
+  const docente = await asignarCursoADocente(curso.id, school.id, 'docente@demo.com');
+  const materiaEtica = await Materia.create({ nombre: 'Etica', schoolId: school.id });
+
+  await DocenteCursoMateria.create({ usuarioId: docente.id, cursoId: curso.id, materiaId: materiaEtica.id, schoolId: school.id });
+
+  const estudiante = await Estudiante.create({
+    nombres: 'Nora',
+    apellidos: 'Campos',
+    qr: `QR-NORA-${Date.now()}`,
+    cursoId: curso.id
+  });
+
+  await EstudianteMateria.create({
+    estudianteId: estudiante.id,
+    cursoId: curso.id,
+    materiaId: materiaEtica.id,
+    schoolId: school.id
+  });
+
+  await Asistencia.create({
+    fecha: '2025-01-15',
+    estado: 'presente',
+    presente: false,
+    ausente: true,
+    estudianteId: estudiante.id,
+    cursoId: curso.id,
+    periodoId: periodo.id,
+    schoolId: school.id,
+    materiaId: materiaEtica.id
+  });
+
+  const res = await request(app)
+    .get(`/estudiantes?cursoId=${curso.id}`)
+    .set('Authorization', `Bearer ${teacherToken}`);
+
+  expect(res.status).toBe(200);
+  const estudianteListado = res.body.find((item) => item.id === estudiante.id);
+  expect(estudianteListado?.faltas).toEqual({
+    total: 1,
+    ausente: 1,
+    afuera: 0,
+    materias: [
+      { materia: 'Etica', faltas: 1, ausente: 1, afuera: 0 }
+    ]
+  });
+});
+
 test('Docente no puede actualizar ni eliminar estudiantes de otra materia en el mismo curso', async () => {
   const docenteUno = await asignarCursoADocente(curso.id, school.id, 'docente@demo.com');
   const docenteDos = await asignarCursoADocente(curso.id, school.id, 'docente2@demo.com');
@@ -1553,7 +1691,7 @@ test('Registra asistencia por QR dentro de periodo activo', async () => {
   expect(registroDb?.horaRegistro).toBeTruthy();
 });
 
-test('Actualizar asistencia refresca la hora de registro', async () => {
+test('Rechaza un segundo registro de asistencia para la misma clase', async () => {
   const createRes = await registrarAsistencia(teacherToken, {
     qr: studentA.qr,
     cursoId: curso.id,
@@ -1565,22 +1703,19 @@ test('Actualizar asistencia refresca la hora de registro', async () => {
   const createdHora = new Date(createRes.body.registro.horaRegistro || createRes.body.registro.hora_registro).getTime();
   expect(Number.isFinite(createdHora)).toBe(true);
 
-  await new Promise((resolve) => setTimeout(resolve, 15));
-
-  const updateRes = await registrarAsistencia(teacherToken, {
+  const duplicateRes = await registrarAsistencia(teacherToken, {
     qr: studentA.qr,
     cursoId: curso.id,
     fecha: '2025-01-10',
     estado: 'ausente'
   });
 
-  expect(updateRes.status).toBe(200);
-  const updatedHora = new Date(updateRes.body.registro.horaRegistro || updateRes.body.registro.hora_registro).getTime();
-  expect(Number.isFinite(updatedHora)).toBe(true);
-  expect(updatedHora).toBeGreaterThanOrEqual(createdHora);
+  expect(duplicateRes.status).toBe(409);
+  expect(duplicateRes.body).toEqual({ error: 'La asistencia ya fue registrada para esta clase' });
 
   const registroDb = await Asistencia.findByPk(createRes.body.registro.id);
-  expect(new Date(registroDb?.horaRegistro).getTime()).toBe(updatedHora);
+  expect(new Date(registroDb?.horaRegistro).getTime()).toBe(createdHora);
+  expect(registroDb?.estado).toBe('presente');
 });
 
 test('Rechaza asistencia si curso no corresponde al estudiante', async () => {
@@ -1705,7 +1840,7 @@ test('Previene duplicados de asistencia en misma fecha', async () => {
   expect(first.status).toBe(201);
   const dup = await registrarAsistencia(teacherToken, payload);
   expect(dup.status).toBe(409);
-  expect(dup.body).toEqual({ error: 'Ya existe registro para este estudiante/curso/materia/fecha' });
+  expect(dup.body).toEqual({ error: 'La asistencia ya fue registrada para esta clase' });
 });
 
 test('Resumen calcula porcentajes y alertas de inasistencia', async () => {

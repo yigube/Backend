@@ -12,8 +12,10 @@ import {
   Rector,
   Materia,
   DocenteCursoMateria,
-  EstudianteMateria
+  EstudianteMateria,
+  Asistencia
 } from '../models/index.js';
+import { normalizeEstadoAsistencia } from '../utils/asistenciaAggregation.js';
 
 const isDocente = (req) => req.user?.rol === 'docente';
 const canManageAcrossSchools = (req) => req.user?.rol === 'admin' && !normalizedSchoolId(req.user?.schoolId);
@@ -175,6 +177,82 @@ const normalizedIds = (values) => {
     if (Number.isInteger(n) && n > 0) set.add(n);
   });
   return Array.from(set);
+};
+const generateTemporaryPassword = (length = 10) => {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let next = '';
+  for (let i = 0; i < length; i += 1) {
+    next += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+  }
+  return next;
+};
+const buildFaltasResumenByEstudiante = async ({ req, estudiantes = [], schoolId = getUserSchoolId(req), transaction } = {}) => {
+  const estudianteIds = normalizedIds(estudiantes.map((item) => item?.id));
+  const cursoIds = normalizedIds(estudiantes.map((item) => item?.cursoId));
+  if (!estudianteIds.length || !cursoIds.length) return new Map();
+
+  const registros = await Asistencia.findAll({
+    where: {
+      estudianteId: { [Op.in]: estudianteIds },
+      cursoId: { [Op.in]: cursoIds },
+      ...(schoolId ? { schoolId } : {})
+    },
+    attributes: ['estudianteId', 'cursoId', 'materiaId', 'estado', 'presente', 'tarde', 'afuera', 'ausente'],
+    include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }],
+    transaction
+  });
+
+  const resumenByEstudiante = new Map();
+  registros.forEach((registro) => {
+    const estado = normalizeEstadoAsistencia(registro);
+    if (!['ausente', 'afuera'].includes(estado)) return;
+
+    const estudianteId = Number(registro?.estudianteId);
+    const cursoId = Number(registro?.cursoId);
+    if (!Number.isInteger(estudianteId) || estudianteId <= 0) return;
+    if (!Number.isInteger(cursoId) || cursoId <= 0) return;
+
+    const materiaNombre = String(registro?.materia?.nombre || '').trim() || 'Sin materia';
+    const current = resumenByEstudiante.get(estudianteId) || {
+      total: 0,
+      ausente: 0,
+      afuera: 0,
+      materiasMap: new Map()
+    };
+
+    current.total += 1;
+    current.ausente += estado === 'ausente' ? 1 : 0;
+    current.afuera += estado === 'afuera' ? 1 : 0;
+
+    const currentMateria = current.materiasMap.get(materiaNombre) || {
+      materia: materiaNombre,
+      faltas: 0,
+      ausente: 0,
+      afuera: 0
+    };
+    currentMateria.faltas += 1;
+    currentMateria.ausente += estado === 'ausente' ? 1 : 0;
+    currentMateria.afuera += estado === 'afuera' ? 1 : 0;
+    current.materiasMap.set(materiaNombre, currentMateria);
+
+    resumenByEstudiante.set(estudianteId, current);
+  });
+
+  return new Map(
+    Array.from(resumenByEstudiante.entries()).map(([estudianteId, value]) => [
+      estudianteId,
+      {
+        total: value.total,
+        ausente: value.ausente,
+        afuera: value.afuera,
+        materias: Array.from(value.materiasMap.values()).sort((left, right) => {
+          const byFaltas = Number(right?.faltas || 0) - Number(left?.faltas || 0);
+          if (byFaltas !== 0) return byFaltas;
+          return String(left?.materia || '').localeCompare(String(right?.materia || ''), undefined, { sensitivity: 'base' });
+        })
+      }
+    ])
+  );
 };
 const normalizeMateriaKey = (value) => String(value || '')
   .trim()
@@ -358,7 +436,7 @@ const syncMateriasDocente = async ({
     await DocenteCursoMateria.bulkCreate(links, { ignoreDuplicates: true, transaction });
   }
 };
-const mapMateriasToEstudiantes = (estudiantes = [], materiaLinks = []) => {
+const mapMateriasToEstudiantes = (estudiantes = [], materiaLinks = [], faltasResumenMap = null) => {
   const materiasMap = new Map();
   materiaLinks.forEach((link) => {
     const estudianteId = Number(link?.estudianteId);
@@ -371,9 +449,18 @@ const mapMateriasToEstudiantes = (estudiantes = [], materiaLinks = []) => {
 
   return estudiantes.map((estudiante) => {
     const raw = estudiante?.toJSON ? estudiante.toJSON() : estudiante;
+    const includeFaltas = faltasResumenMap instanceof Map;
     return {
       ...raw,
-      materias: materiasMap.get(Number(raw?.id)) || []
+      materias: materiasMap.get(Number(raw?.id)) || [],
+      ...(includeFaltas ? {
+        faltas: faltasResumenMap.get(Number(raw?.id)) || {
+          total: 0,
+          ausente: 0,
+          afuera: 0,
+          materias: []
+        }
+      } : {})
     };
   });
 };
@@ -581,6 +668,7 @@ const buildRectorPayload = async (body) => {
   const plainPassword = normalizeOptionalText(body.rectorPassword);
   if (plainPassword) {
     payload.passwordHash = await bcrypt.hash(plainPassword, 10);
+    payload.mustChangePassword = true;
   }
   return payload;
 };
@@ -878,7 +966,12 @@ export async function listarEstudiantes(req, res){
   });
   if (isDocente(req)) {
     const visible = await filterVisibleEstudiantesForDocente({ req, schoolId, estudiantes: ests });
-    return res.json(mapMateriasToEstudiantes(visible.estudiantes, visible.materiaLinks));
+    const faltasResumen = await buildFaltasResumenByEstudiante({
+      req,
+      schoolId,
+      estudiantes: visible.estudiantes
+    });
+    return res.json(mapMateriasToEstudiantes(visible.estudiantes, visible.materiaLinks, faltasResumen));
   }
   const materiaLinks = ests.length
     ? await EstudianteMateria.findAll({
@@ -886,7 +979,12 @@ export async function listarEstudiantes(req, res){
       include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }]
     })
     : [];
-  res.json(mapMateriasToEstudiantes(ests, materiaLinks));
+  const faltasResumen = await buildFaltasResumenByEstudiante({
+    req,
+    schoolId,
+    estudiantes: ests
+  });
+  res.json(mapMateriasToEstudiantes(ests, materiaLinks, faltasResumen));
 }
 
 /** Actualiza datos de un estudiante del colegio del usuario. */
@@ -1286,7 +1384,7 @@ export async function crearDocente(req, res) {
     }
   }
 
-  const docente = await Usuario.create({ nombre, email, passwordHash, rol: 'docente', schoolId });
+  const docente = await Usuario.create({ nombre, email, passwordHash, rol: 'docente', schoolId, mustChangePassword: false });
 
   if (cursos.length) {
     // Vincula cursos existentes del mismo colegio.
@@ -1334,7 +1432,10 @@ export async function actualizarDocente(req, res) {
     await sequelize.transaction(async (transaction) => {
       if (nombre) docente.nombre = nombre;
       if (email) docente.email = email;
-      if (password) docente.passwordHash = await bcrypt.hash(password, 10);
+      if (password) {
+        docente.passwordHash = await bcrypt.hash(password, 10);
+        docente.mustChangePassword = true;
+      }
       docente.schoolId = targetSchoolId;
       await docente.save({ transaction });
 
@@ -1386,6 +1487,30 @@ export async function actualizarDocente(req, res) {
     { ...docente.toJSON(), cursos: cursosDocente }
   ], materiaLinks);
   res.json(docenteConMaterias);
+}
+
+/** Restablece clave de un docente y exige cambio al siguiente inicio de sesion (solo admin). */
+export async function resetearClaveDocente(req, res) {
+  const where = { id: req.params.id, rol: 'docente' };
+  if (!canManageAcrossSchools(req)) where.schoolId = req.user.schoolId;
+  const docente = await Usuario.findOne({ where });
+  if (!docente) return res.status(404).json({ error: 'Docente no encontrado' });
+
+  const temporaryPassword = generateTemporaryPassword(10);
+  docente.passwordHash = await bcrypt.hash(temporaryPassword, 10);
+  docente.mustChangePassword = true;
+  await docente.save();
+
+  return res.json({
+    ok: true,
+    temporaryPassword,
+    mustChangePassword: true,
+    user: {
+      id: docente.id,
+      nombre: docente.nombre,
+      email: docente.email
+    }
+  });
 }
 
 /** Elimina un docente del mismo colegio (solo admin). */

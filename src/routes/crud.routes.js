@@ -26,9 +26,10 @@ import {
   eliminarColegio,
   crearDocente,
   actualizarDocente,
-  eliminarDocente
+  eliminarDocente,
+  resetearClaveDocente
 } from '../controllers/crud.controller.js';
-import { crearCursoRules, actualizarCursoRules, crearEstudianteRules, crearEstudiantesLoteRules, actualizarEstudianteRules, eliminarEstudianteRules, crearPeriodoRules, actualizarPeriodoRules, crearColegioRules, actualizarColegioRules, listarCursosColegioRules, crearDocenteRules, actualizarDocenteRules } from '../middleware/validators.js';
+import { crearCursoRules, actualizarCursoRules, crearEstudianteRules, crearEstudiantesLoteRules, actualizarEstudianteRules, eliminarEstudianteRules, crearPeriodoRules, actualizarPeriodoRules, crearColegioRules, actualizarColegioRules, listarCursosColegioRules, crearDocenteRules, actualizarDocenteRules, resetDocentePasswordRules } from '../middleware/validators.js';
 import { handleValidation } from '../middleware/validationResult.js';
 import { asyncHandler } from '../middleware/errors.js';
 
@@ -60,5 +61,6 @@ router.delete('/colegios/:id', authRequired, requireRole('admin'), asyncHandler(
 router.post('/docentes', authRequired, requireRole('admin', 'rector', 'coordinador'), crearDocenteRules, handleValidation, asyncHandler(crearDocente));
 router.put('/docentes/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), actualizarDocenteRules, handleValidation, asyncHandler(actualizarDocente));
 router.delete('/docentes/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(eliminarDocente));
+router.post('/docentes/:id/reset-password', authRequired, requireRole('admin'), resetDocentePasswordRules, handleValidation, asyncHandler(resetearClaveDocente));
 
 export default router;

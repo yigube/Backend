@@ -38,7 +38,8 @@ export async function login(req, res) {
         email: user.email,
         rol: user.rol,
         schoolId: user.schoolId ?? null,
-        schoolName: colegio?.nombre || ''
+        schoolName: colegio?.nombre || '',
+        mustChangePassword: Boolean(user.mustChangePassword)
       }
     });
   }
@@ -60,7 +61,47 @@ export async function login(req, res) {
       email: rector.correo,
       rol: rolDirectivo,
       schoolId: rector.schoolId,
-      schoolName: colegio?.nombre || ''
+      schoolName: colegio?.nombre || '',
+      mustChangePassword: Boolean(rector.mustChangePassword)
     }
   });
+}
+
+/** Permite a usuario/directivo autenticado cambiar su clave. */
+export async function changePassword(req, res) {
+  const { currentPassword, newPassword } = req.body;
+  const authId = req.user?.id;
+  if (!authId) return res.status(401).json({ error: 'No autenticado' });
+
+  const isRectorToken = String(authId).startsWith('rector-');
+  if (isRectorToken) {
+    const rectorId = Number(String(authId).replace('rector-', ''));
+    if (!Number.isInteger(rectorId) || rectorId <= 0) {
+      return res.status(400).json({ error: 'Token invalido' });
+    }
+    const rector = await Rector.findByPk(rectorId);
+    if (!rector || !rector.passwordHash) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+    const ok = await bcrypt.compare(currentPassword, rector.passwordHash);
+    if (!ok) return res.status(401).json({ error: 'Clave actual invalida' });
+    rector.passwordHash = await bcrypt.hash(newPassword, 10);
+    rector.mustChangePassword = false;
+    await rector.save();
+    return res.json({ ok: true, mustChangePassword: false });
+  }
+
+  const userId = Number(authId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'Token invalido' });
+  }
+  const usuario = await Usuario.findByPk(userId);
+  if (!usuario) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  const ok = await bcrypt.compare(currentPassword, usuario.passwordHash);
+  if (!ok) return res.status(401).json({ error: 'Clave actual invalida' });
+  usuario.passwordHash = await bcrypt.hash(newPassword, 10);
+  usuario.mustChangePassword = false;
+  await usuario.save();
+  return res.json({ ok: true, mustChangePassword: false });
 }

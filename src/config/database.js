@@ -1,6 +1,8 @@
-﻿// Inicializa Sequelize y sincroniza el esquema; en test crea la BD si no existe.
+// Inicializa Sequelize y prepara el esquema; en test crea la BD si no existe.
 import { Sequelize } from 'sequelize';
 import dotenv from 'dotenv';
+import { buildBrokenSchemaMessage, isBrokenInnoDbTableError, runMigrations } from './db-maintenance.js';
+
 dotenv.config();
 
 const isTest = process.env.NODE_ENV === 'test';
@@ -10,8 +12,10 @@ const port = process.env.DB_PORT || 3306;
 const dbName = isTest
   ? process.env.DB_NAME_TEST || process.env.DB_NAME || 'asistencia_db_test'
   : process.env.DB_NAME || 'asistencia_db';
+const username = process.env.DB_USER;
+const password = process.env.DB_PASSWORD;
 
-export const sequelize = new Sequelize(dbName, process.env.DB_USER, process.env.DB_PASSWORD, {
+export const sequelize = new Sequelize(dbName, username, password, {
   host,
   port,
   dialect,
@@ -21,10 +25,19 @@ export const sequelize = new Sequelize(dbName, process.env.DB_USER, process.env.
   dialectOptions: { timezone: process.env.DB_TZ }
 });
 
+export const dbConfig = {
+  database: dbName,
+  host,
+  port,
+  dialect,
+  username,
+  password
+};
+
 // Crea la base en MySQL cuando corre en modo test para evitar fallos por schema inexistente.
 async function ensureDatabaseExists(name) {
   if (dialect !== 'mysql') return;
-  const admin = new Sequelize('', process.env.DB_USER, process.env.DB_PASSWORD, {
+  const admin = new Sequelize('', username, password, {
     host,
     port,
     dialect,
@@ -34,33 +47,35 @@ async function ensureDatabaseExists(name) {
   await admin.close();
 }
 
-// Abre conexion y sincroniza el esquema; en dev intenta alter y fuerza si hay incompatibilidades.
+// Abre conexion y prepara el esquema. En test usa sync forzado; fuera de test aplica migraciones.
 export async function connectDB() {
   try {
     if (isTest) await ensureDatabaseExists(dbName);
     await sequelize.authenticate();
+
+    if (isTest) {
+      await sequelize.sync({ force: true });
+      console.log(`DB connected and synced (${dbName})`);
+      return;
+    }
+
     const isProd = process.env.NODE_ENV === 'production';
-    if (isProd && process.env.ALLOW_SYNC_IN_PROD !== 'true') {
+    if (isProd && process.env.RUN_DB_MIGRATIONS_ON_START !== 'true') {
       console.log('DB connected (sin sync en produccion; aplica migraciones antes de arrancar)');
       return;
     }
 
-    const syncOptions = isTest ? { force: true } : { alter: true }; // En prod usar migraciones
-    try {
-      await sequelize.sync(syncOptions); // En prod usar migraciones en lugar de sync
-    } catch (err) {
-      const canForce = process.env.NODE_ENV !== 'production' && !isTest;
-      if (canForce) {
-        // Evita borrado destructivo automatico en desarrollo.
-        // Si alter falla, mantenemos esquema actual para permitir arranque.
-        console.warn('Sync con alter fallo, continuando sin alter para evitar perdida de datos:', err.message);
-        await sequelize.sync();
-      } else {
-        throw err;
-      }
+    const appliedMigrations = await runMigrations(sequelize);
+    if (appliedMigrations.length) {
+      console.log(`DB connected and migrated (${dbName}): ${appliedMigrations.join(', ')}`);
+      return;
     }
-    console.log(`DB connected and synced (${dbName})`);
+
+    console.log(`DB connected (${dbName})`);
   } catch (e) {
+    if (isBrokenInnoDbTableError(e)) {
+      console.error('DB schema error:', buildBrokenSchemaMessage(dbName));
+    }
     console.error('DB connection error:', e.message);
     throw e;
   }

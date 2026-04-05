@@ -37,11 +37,35 @@ const normalizeFechaISODateOnly = (value) => {
   }
   return null;
 };
+const toComparableDateKey = (value) => {
+  if (!value) return 0;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) return Number(`${match[1]}${match[2]}${match[3]}`);
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) {
+      const y = parsed.getUTCFullYear();
+      const m = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(parsed.getUTCDate()).padStart(2, '0');
+      return Number(`${y}${m}${d}`);
+    }
+    return 0;
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(value.getUTCDate()).padStart(2, '0');
+    return Number(`${y}${m}${d}`);
+  }
+  return 0;
+};
 const normalizeMateriaKey = (value) => String(value || '')
   .trim()
   .toLowerCase()
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '');
+const DUPLICATE_ATTENDANCE_ERROR = 'La asistencia ya fue registrada para esta clase';
 const resolveCursoForRequest = async (req, cursoId) => {
   const where = isAdmin(req)
     ? { id: cursoId }
@@ -235,9 +259,17 @@ export async function registrarDesdeQR(req, res) {
   // Normaliza fecha a YYYY-MM-DD para comparar con periodos (almacenados por rango).
   const fechaISO = normalizeFechaISODateOnly(fecha);
   if (!fechaISO) return res.status(400).json({ error: 'fecha invalida' });
-  const periodo = await Periodo.findOne({
-    where: { fechaInicio: { [Op.lte]: fechaISO }, fechaFin: { [Op.gte]: fechaISO }, schoolId }
+  const requestedDateKey = toComparableDateKey(fechaISO);
+  const periodosColegio = await Periodo.findAll({
+    where: { schoolId },
+    order: [['fechaInicio', 'ASC']]
   });
+  const periodo = periodosColegio.find((item) => {
+    const startKey = toComparableDateKey(item?.fechaInicio);
+    const endKey = toComparableDateKey(item?.fechaFin);
+    if (!startKey || !endKey || !requestedDateKey) return false;
+    return requestedDateKey >= startKey && requestedDateKey <= endKey;
+  }) || null;
   if (!periodo) return res.status(400).json({ error: 'No existe periodo activo para la fecha' });
 
   if (Number(estudiante.cursoId) !== Number(cursoId)) {
@@ -276,42 +308,7 @@ export async function registrarDesdeQR(req, res) {
     where: asistenciaWhere
   });
   if (existente) {
-    const hayActualizacionExplicita = Boolean(
-      estado
-      || tarde === true
-      || afuera === true
-      || ausente === true
-      || presente === false
-    );
-    if (!hayActualizacionExplicita) {
-      return res.status(409).json({
-        error: materia ? 'Ya existe registro para este estudiante/curso/materia/fecha' : 'Ya existe registro para este estudiante/curso/fecha'
-      });
-    }
-    existente.estado = estadoNormalizado;
-    existente.presente = estadoACampoPresente(estadoNormalizado);
-    existente.tarde = flagsEstado.tarde;
-    existente.afuera = flagsEstado.afuera;
-    existente.ausente = flagsEstado.ausente;
-    existente.horaRegistro = horaRegistro;
-    existente.materiaId = materia?.id || null;
-    await existente.save();
-    await existente.reload({
-      include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'], required: false }]
-    });
-    try {
-      const io = req.app.get('io');
-      if (io) io.emit('asistencia:registrada', {
-        estudianteId: existente.estudianteId,
-        cursoId: existente.cursoId,
-        materiaId: existente.materiaId || null,
-        fecha: existente.fecha,
-        presente: existente.presente,
-        estado: existente.estado,
-        actualizado: true
-      });
-    } catch {}
-    return res.status(200).json({ message: 'Asistencia actualizada', registro: existente });
+    return res.status(409).json({ error: DUPLICATE_ATTENDANCE_ERROR });
   }
 
   try {
@@ -334,21 +331,24 @@ export async function registrarDesdeQR(req, res) {
     });
     try {
       const io = req.app.get('io');
-      if (io) io.emit('asistencia:registrada', {
-        estudianteId: registro.estudianteId,
-        cursoId: registro.cursoId,
-        materiaId: registro.materiaId || null,
-        fecha: registro.fecha,
-        presente: registro.presente,
-        estado: registro.estado
-      });
+      if (io) {
+        const eventPayload = {
+          estudianteId: registro.estudianteId,
+          cursoId: registro.cursoId,
+          materiaId: registro.materiaId || null,
+          schoolId,
+          fecha: registro.fecha,
+          presente: registro.presente,
+          estado: registro.estado
+        };
+        io.emit('asistencia:registrada', eventPayload);
+        io.emit('attendance:created', eventPayload);
+      }
     } catch {}
     res.status(201).json({ message: 'Asistencia registrada', registro });
   } catch (e) {
     if (e.name === 'SequelizeUniqueConstraintError') {
-      return res.status(409).json({
-        error: materia ? 'Ya existe registro para este estudiante/curso/materia/fecha' : 'Ya existe registro para este estudiante/curso/fecha'
-      });
+      return res.status(409).json({ error: DUPLICATE_ATTENDANCE_ERROR });
     }
     throw e;
   }

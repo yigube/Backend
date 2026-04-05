@@ -29,6 +29,11 @@ export const loginRules = [
   body('password').isString().isLength({ min: 4 }).withMessage('Password invalido')
 ];
 
+export const changePasswordRules = [
+  body('currentPassword').isString().isLength({ min: 4 }).withMessage('Clave actual invalida'),
+  body('newPassword').isString().isLength({ min: 4 }).withMessage('Nueva clave invalida')
+];
+
 export const qrRules = [
   body('qr').isString().notEmpty(),
   body('cursoId').isInt({ min: 1 }),
@@ -161,14 +166,39 @@ const docenteNombreRegex = /^[A-Za-zÁÉÍÓÚáéíóúÑñÜü]+(?:\s+[A-Za-z�
 
 export const crearColegioRules = [
   body('nombre').isString().withMessage('Nombre del colegio invalido').notEmpty().withMessage('Nombre del colegio invalido'),
-  codigoDaneRule,
-  rectorNombreRule,
-  rectorApellidoRule,
-  rectorCargoRule,
-  rectorCorreoRule,
-  rectorTelefonoRule,
-  rectorCedulaRule,
-  rectorPasswordRule
+  body('codigoDane')
+    .isString().withMessage('Codigo DANE invalido')
+    .trim()
+    .notEmpty().withMessage('Codigo DANE requerido')
+    .isLength({ min: 3, max: 30 }).withMessage('Codigo DANE invalido'),
+  body('rectorNombre')
+    .isString().withMessage('Nombre del rector invalido')
+    .trim()
+    .notEmpty().withMessage('Nombre del rector requerido')
+    .isLength({ min: 2, max: 120 }).withMessage('Nombre del rector invalido'),
+  body('rectorApellido')
+    .isString().withMessage('Apellido del rector invalido')
+    .trim()
+    .notEmpty().withMessage('Apellido del rector requerido')
+    .isLength({ min: 2, max: 120 }).withMessage('Apellido del rector invalido'),
+  body('rectorCargo')
+    .optional({ values: 'falsy' })
+    .isIn(['rector', 'coordinador']).withMessage('Cargo del rector invalido'),
+  body('rectorCorreo')
+    .isEmail().withMessage('Correo del rector invalido'),
+  body('rectorTelefono')
+    .optional({ values: 'falsy' })
+    .isString().withMessage('Telefono del rector invalido')
+    .trim()
+    .isLength({ min: 7, max: 30 }).withMessage('Telefono del rector invalido'),
+  body('rectorCedula')
+    .optional({ values: 'falsy' })
+    .isString().withMessage('Cedula del rector invalida')
+    .trim()
+    .isLength({ min: 5, max: 30 }).withMessage('Cedula del rector invalida'),
+  body('rectorPassword')
+    .isString().withMessage('Password del rector invalido')
+    .isLength({ min: 4, max: 120 }).withMessage('Password del rector invalido')
 ];
 
 export const actualizarColegioRules = [
@@ -216,4 +246,8 @@ export const actualizarDocenteRules = [
   body('cursoIds.*').optional().isInt({ min: 1 }).withMessage('cursoIds debe contener IDs validos'),
   body('materiasPorCurso').optional().custom(materiasPorCursoValidator),
   body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido')
+];
+
+export const resetDocentePasswordRules = [
+  param('id').isInt({ min: 1 }).withMessage('id invalido')
 ];
