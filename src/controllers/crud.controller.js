@@ -16,6 +16,7 @@ import {
   Asistencia
 } from '../models/index.js';
 import { normalizeEstadoAsistencia } from '../utils/asistenciaAggregation.js';
+import { sendTemporaryPasswordEmail } from '../utils/email.js';
 
 const isDocente = (req) => req.user?.rol === 'docente';
 const canManageAcrossSchools = (req) => req.user?.rol === 'admin' && !normalizedSchoolId(req.user?.schoolId);
@@ -1496,15 +1497,29 @@ export async function resetearClaveDocente(req, res) {
   const docente = await Usuario.findOne({ where });
   if (!docente) return res.status(404).json({ error: 'Docente no encontrado' });
 
-  const temporaryPassword = generateTemporaryPassword(10);
-  docente.passwordHash = await bcrypt.hash(temporaryPassword, 10);
-  docente.mustChangePassword = true;
-  await docente.save();
+  try {
+    const temporaryPassword = generateTemporaryPassword(10);
+    await sequelize.transaction(async (transaction) => {
+      docente.passwordHash = await bcrypt.hash(temporaryPassword, 10);
+      docente.mustChangePassword = true;
+      await docente.save({ transaction });
+      await sendTemporaryPasswordEmail({
+        to: docente.email,
+        nombre: docente.nombre || docente.email,
+        temporaryPassword
+      });
+    });
+  } catch (error) {
+    if (error?.code === 'SMTP_CONFIG_MISSING') {
+      return res.status(503).json({ error: 'Servicio de correo no configurado para restablecer claves' });
+    }
+    throw error;
+  }
 
   return res.json({
     ok: true,
-    temporaryPassword,
     mustChangePassword: true,
+    message: 'Se envio una clave temporal al correo del docente.',
     user: {
       id: docente.id,
       nombre: docente.nombre,

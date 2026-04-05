@@ -168,7 +168,7 @@ const rectorCedulaRule = body('rectorCedula')
 const rectorPasswordRule = body('rectorPassword')
   .optional({ values: 'falsy' })
   .isString().withMessage('Password del rector invalido')
-  .isLength({ min: 4, max: 120 }).withMessage('Password del rector invalido');
+  .matches(strongPasswordRegex).withMessage('La clave debe tener minimo 8 caracteres, mayuscula, minuscula, numero y caracter especial');
 const docenteNombreRegex = /^[A-Za-zÁÉÍÓÚáéíóúÑñÜü]+(?:\s+[A-Za-zÁÉÍÓÚáéíóúÑñÜü]+)*$/;
 
 export const crearColegioRules = [
@@ -205,7 +205,7 @@ export const crearColegioRules = [
     .isLength({ min: 5, max: 30 }).withMessage('Cedula del rector invalida'),
   body('rectorPassword')
     .isString().withMessage('Password del rector invalido')
-    .isLength({ min: 4, max: 120 }).withMessage('Password del rector invalido')
+    .matches(strongPasswordRegex).withMessage('La clave debe tener minimo 8 caracteres, mayuscula, minuscula, numero y caracter especial')
 ];
 
 export const actualizarColegioRules = [
@@ -233,6 +233,9 @@ export const crearDocenteRules = [
     .matches(docenteNombreRegex).withMessage('El nombre solo puede contener letras y espacios'),
   body('email').isEmail().withMessage('Email invalido'),
   body('password').isString().isLength({ min: 4 }).withMessage('Password invalido'),
+  body('password')
+    .matches(strongPasswordRegex)
+    .withMessage('La clave debe tener minimo 8 caracteres, mayuscula, minuscula, numero y caracter especial'),
   body('cursoIds').optional().isArray(),
   body('cursoIds.*').optional().isInt({ min: 1 }).withMessage('cursoIds debe contener IDs validos'),
   body('materiasPorCurso').optional().custom(materiasPorCursoValidator),
@@ -248,7 +251,11 @@ export const actualizarDocenteRules = [
     .notEmpty().withMessage('Nombre invalido')
     .matches(docenteNombreRegex).withMessage('El nombre solo puede contener letras y espacios'),
   body('email').optional().isEmail().withMessage('Email invalido'),
-  body('password').optional().isString().isLength({ min: 4 }).withMessage('Password invalido'),
+  body('password')
+    .optional()
+    .isString()
+    .matches(strongPasswordRegex)
+    .withMessage('La clave debe tener minimo 8 caracteres, mayuscula, minuscula, numero y caracter especial'),
   body('cursoIds').optional().isArray(),
   body('cursoIds.*').optional().isInt({ min: 1 }).withMessage('cursoIds debe contener IDs validos'),
   body('materiasPorCurso').optional().custom(materiasPorCursoValidator),

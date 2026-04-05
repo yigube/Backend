@@ -1,6 +1,7 @@
 ﻿// Controlador de autenticacion JWT.
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { sequelize } from "../config/database.js";
 import { Usuario, Colegio, Rector } from "../models/index.js";
 import { sendTemporaryPasswordEmail } from "../utils/email.js";
 
@@ -120,6 +121,7 @@ export async function changePassword(req, res) {
 export async function requestPasswordReset(req, res) {
   const { email } = req.body;
   const emailNorm = String(email || '').trim().toLowerCase();
+  const genericResponse = { ok: true, message: 'Si el correo existe, recibiras una clave temporal.' };
 
   const [user, rector] = await Promise.all([
     Usuario.findOne({ where: { email: emailNorm } }),
@@ -127,34 +129,43 @@ export async function requestPasswordReset(req, res) {
   ]);
 
   if (!user && !rector) {
-    return res.json({ ok: true, message: 'Si el correo existe, recibiras una clave temporal.' });
+    return res.json(genericResponse);
   }
 
-  if (user) {
-    const temporaryPassword = generateTemporaryPassword(10);
-    user.passwordHash = await bcrypt.hash(temporaryPassword, 10);
-    user.mustChangePassword = true;
-    await user.save();
-    await sendTemporaryPasswordEmail({
-      to: user.email,
-      nombre: user.nombre || user.email,
-      temporaryPassword
-    });
-    return res.json({ ok: true, message: 'Se envio una clave temporal al correo registrado.' });
+  try {
+    if (user) {
+      const temporaryPassword = generateTemporaryPassword(10);
+      await sequelize.transaction(async (transaction) => {
+        user.passwordHash = await bcrypt.hash(temporaryPassword, 10);
+        user.mustChangePassword = true;
+        await user.save({ transaction });
+        await sendTemporaryPasswordEmail({
+          to: user.email,
+          nombre: user.nombre || user.email,
+          temporaryPassword
+        });
+      });
+      return res.json(genericResponse);
+    }
+
+    if (rector) {
+      const temporaryPassword = generateTemporaryPassword(10);
+      await sequelize.transaction(async (transaction) => {
+        rector.passwordHash = await bcrypt.hash(temporaryPassword, 10);
+        rector.mustChangePassword = true;
+        await rector.save({ transaction });
+        await sendTemporaryPasswordEmail({
+          to: rector.correo,
+          nombre: [rector.nombre, rector.apellido].filter(Boolean).join(' ').trim() || rector.correo,
+          temporaryPassword
+        });
+      });
+      return res.json(genericResponse);
+    }
+  } catch (error) {
+    console.error('Password reset delivery error', error?.message || error);
+    return res.json(genericResponse);
   }
 
-  if (rector) {
-    const temporaryPassword = generateTemporaryPassword(10);
-    rector.passwordHash = await bcrypt.hash(temporaryPassword, 10);
-    rector.mustChangePassword = true;
-    await rector.save();
-    await sendTemporaryPasswordEmail({
-      to: rector.correo,
-      nombre: [rector.nombre, rector.apellido].filter(Boolean).join(' ').trim() || rector.correo,
-      temporaryPassword
-    });
-    return res.json({ ok: true, message: 'Se envio una clave temporal al correo registrado.' });
-  }
-
-  return res.json({ ok: true, message: 'Si el correo existe, recibiras una clave temporal.' });
+  return res.json(genericResponse);
 }

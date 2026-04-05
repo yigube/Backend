@@ -1,13 +1,18 @@
-﻿// Rate limit in-memory para endpoint de login.
+// Rate limit in-memory para endpoints de autenticacion.
 const buckets = new Map();
 
 export function resetLoginRateLimitBuckets() {
   buckets.clear();
 }
 
-export function rateLimitLogin({ windowMs = 15 * 60 * 1000, max = 30 } = {}) {
+function createInMemoryRateLimiter({
+  windowMs,
+  max,
+  keyGenerator,
+  errorMessage
+}) {
   return (req, res, next) => {
-    const key = req.ip || req.headers['x-forwarded-for'] || 'anon';
+    const key = keyGenerator(req);
     const now = Date.now();
     const entry = buckets.get(key) || { count: 0, reset: now + windowMs };
 
@@ -22,9 +27,31 @@ export function rateLimitLogin({ windowMs = 15 * 60 * 1000, max = 30 } = {}) {
     if (entry.count > max) {
       const retry = Math.ceil((entry.reset - now) / 1000);
       res.setHeader('Retry-After', retry);
-      return res.status(429).json({ error: 'Demasiados intentos, intenta mas tarde' });
+      return res.status(429).json({ error: errorMessage });
     }
 
     next();
   };
+}
+
+export function rateLimitLogin({ windowMs = 15 * 60 * 1000, max = 30 } = {}) {
+  return createInMemoryRateLimiter({
+    windowMs,
+    max,
+    keyGenerator: (req) => req.ip || req.headers['x-forwarded-for'] || 'anon',
+    errorMessage: 'Demasiados intentos, intenta mas tarde'
+  });
+}
+
+export function rateLimitPasswordReset({ windowMs = 60 * 60 * 1000, max = 5 } = {}) {
+  return createInMemoryRateLimiter({
+    windowMs,
+    max,
+    keyGenerator: (req) => {
+      const ip = req.ip || req.headers['x-forwarded-for'] || 'anon';
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      return `${ip}|${email || 'no-email'}`;
+    },
+    errorMessage: 'Demasiados intentos de restablecimiento, intenta mas tarde'
+  });
 }

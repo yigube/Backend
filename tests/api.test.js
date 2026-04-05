@@ -372,7 +372,7 @@ test('Coordinador solo gestiona su colegio y puede activar periodos propios', as
     .send({
       nombre: 'Docente Coord',
       email: 'docente.coord@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: otherSchool.id,
       cursoIds: [curso.id]
     });
@@ -478,7 +478,7 @@ test('Admin crea docente y asigna cursos del colegio seleccionado', async () => 
     .send({
       nombre: 'Docente Nuevo',
       email: 'docente.nuevo@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id]
     });
@@ -496,7 +496,7 @@ test('Admin no puede crear docente con nombre que no sea solo texto', async () =
     .send({
       nombre: 'Docente 123',
       email: 'docente.texto@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id]
     });
@@ -513,7 +513,7 @@ test('Admin no puede crear docente con correo invalido', async () => {
     .send({
       nombre: 'Docente Valido',
       email: 'correo-invalido',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id]
     });
@@ -533,7 +533,7 @@ test('Admin crea docente con materias en multiples cursos y las lista completas'
     .send({
       nombre: 'Docente Materias',
       email: 'docente.materias@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id, cursoDos.id, cursoTres.id],
       materiasPorCurso: {
@@ -601,7 +601,7 @@ test('Admin crea docente con 4 materias en un curso y se insertan completas en b
     .send({
       nombre: 'Docente Cuatro Materias',
       email: 'docente.4materias@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id],
       materiasPorCurso: {
@@ -656,7 +656,7 @@ test('Admin puede asignar la misma materia al mismo docente en cursos distintos'
     .send({
       nombre: 'Docente Misma Materia',
       email: 'docente.misma.materia@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id, cursoDos.id],
       materiasPorCurso: {
@@ -703,7 +703,7 @@ test('Admin actualiza docente y persiste todas las materias en multiples cursos'
     .send({
       nombre: 'Docente Actualizar',
       email: 'docente.actualizar@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id]
     });
@@ -783,7 +783,7 @@ test('Admin actualiza materias de un docente y elimina materias huerfanas del ca
     .send({
       nombre: 'Docente Reemplazo Materia',
       email: 'docente.reemplazo@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id],
       materiasPorCurso: {
@@ -829,7 +829,7 @@ test('Admin actualiza materias y conserva las materias compartidas por otros doc
     .send({
       nombre: 'Docente Compartido Uno',
       email: 'docente.compartido1@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id],
       materiasPorCurso: {
@@ -842,7 +842,7 @@ test('Admin actualiza materias y conserva las materias compartidas por otros doc
     .send({
       nombre: 'Docente Compartido Dos',
       email: 'docente.compartido2@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id],
       materiasPorCurso: {
@@ -895,7 +895,7 @@ test('Admin actualiza docente sin enviar una materia y conserva la materia exist
     .send({
       nombre: 'Docente Conserva Materia',
       email: 'docente.conserva@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id, cursoDos.id, cursoTres.id],
       materiasPorCurso: {
@@ -938,7 +938,7 @@ test('Admin actualiza cursos de un docente sin materiasPorCurso y preserva sus m
     .send({
       nombre: 'Docente Sin Payload Materias',
       email: 'docente.sinpayload@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id, cursoDos.id],
       materiasPorCurso: {
@@ -975,7 +975,7 @@ test('Admin puede vaciar una materia enviando arreglo vacio para ese curso', asy
     .send({
       nombre: 'Docente Vacia Materia',
       email: 'docente.vacia@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id, cursoDos.id],
       materiasPorCurso: {
@@ -1014,7 +1014,7 @@ test('Admin actualiza una materia sin tilde y conserva el vinculo con una materi
     .send({
       nombre: 'Docente Tildes',
       email: 'docente.tildes@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id],
       materiasPorCurso: {
@@ -1060,7 +1060,7 @@ test('Admin crea un docente usando una materia sin tilde y reutiliza la materia 
     .send({
       nombre: 'Docente Base Tildes',
       email: 'docente.base.tildes@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id],
       materiasPorCurso: {
@@ -1076,7 +1076,7 @@ test('Admin crea un docente usando una materia sin tilde y reutiliza la materia 
     .send({
       nombre: 'Docente Reutiliza Tildes',
       email: 'docente.reutiliza.tildes@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id],
       materiasPorCurso: {
@@ -1101,7 +1101,7 @@ test('Admin elimina docente y borra en cascada sus cursos y materias asignadas',
     .send({
       nombre: 'Docente Eliminar',
       email: 'docente.eliminar@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [curso.id, cursoDos.id],
       materiasPorCurso: {
@@ -1144,7 +1144,7 @@ test('Admin no puede crear docente con cursos de otro colegio', async () => {
     .send({
       nombre: 'Docente Invalido',
       email: 'docente.invalido@demo.com',
-      password: 'doc1234',
+      password: 'Docente1!',
       schoolId: school.id,
       cursoIds: [otroCurso.id]
     });
@@ -1160,7 +1160,7 @@ test('Admin valida unicidad de correo, cedula y telefono del rector', async () =
   const base = {
     rectorNombre: 'Rector',
     rectorApellido: 'Uno',
-    rectorPassword: 'rector1234'
+    rectorPassword: 'Rector1!'
   };
 
   const createFirst = await request(app)
@@ -1229,7 +1229,7 @@ test('Admin recibe mensaje claro cuando el correo del rector es invalido', async
       rectorNombre: 'Rector',
       rectorApellido: 'Demo',
       rectorCorreo: 'correo-invalido',
-      rectorPassword: 'rector1234'
+      rectorPassword: 'Rector1!'
     });
 
   expect(res.status).toBe(422);
@@ -2075,3 +2075,5 @@ test('Docente no puede acceder al dashboard de reportes', async () => {
   expect(res.status).toBe(403);
   expect(res.body).toEqual({ error: 'No autorizado' });
 });
+
+

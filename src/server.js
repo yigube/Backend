@@ -7,7 +7,9 @@ import { createCorsOriginOption } from './utils/cors.js';
 
 const basePort = Number(process.env.PORT) || 4000;
 const socketCorsOrigin = createCorsOriginOption(process.env.CORS_ORIGINS);
-const corsConfig = socketCorsOrigin !== '*' ? { origin: socketCorsOrigin, credentials: true } : { origin: '*', credentials: true };
+const corsConfig = socketCorsOrigin !== '*'
+  ? { origin: socketCorsOrigin, credentials: true }
+  : { origin: '*', credentials: false };
 
 init().then(app => {
   const httpServer = createServer(app);
