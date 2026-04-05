@@ -2,6 +2,16 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { Usuario, Colegio, Rector } from "../models/index.js";
+import { sendTemporaryPasswordEmail } from "../utils/email.js";
+
+const generateTemporaryPassword = (length = 10) => {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let next = '';
+  for (let i = 0; i < length; i += 1) {
+    next += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+  }
+  return next;
+};
 
 /** Login con email/password. Devuelve JWT con rol y schoolId. */
 export async function login(req, res) {
@@ -104,4 +114,47 @@ export async function changePassword(req, res) {
   usuario.mustChangePassword = false;
   await usuario.save();
   return res.json({ ok: true, mustChangePassword: false });
+}
+
+/** Solicita restablecimiento desde login: genera y envia una clave temporal al correo. */
+export async function requestPasswordReset(req, res) {
+  const { email } = req.body;
+  const emailNorm = String(email || '').trim().toLowerCase();
+
+  const [user, rector] = await Promise.all([
+    Usuario.findOne({ where: { email: emailNorm } }),
+    Rector.findOne({ where: { correo: emailNorm } })
+  ]);
+
+  if (!user && !rector) {
+    return res.json({ ok: true, message: 'Si el correo existe, recibiras una clave temporal.' });
+  }
+
+  if (user) {
+    const temporaryPassword = generateTemporaryPassword(10);
+    user.passwordHash = await bcrypt.hash(temporaryPassword, 10);
+    user.mustChangePassword = true;
+    await user.save();
+    await sendTemporaryPasswordEmail({
+      to: user.email,
+      nombre: user.nombre || user.email,
+      temporaryPassword
+    });
+    return res.json({ ok: true, message: 'Se envio una clave temporal al correo registrado.' });
+  }
+
+  if (rector) {
+    const temporaryPassword = generateTemporaryPassword(10);
+    rector.passwordHash = await bcrypt.hash(temporaryPassword, 10);
+    rector.mustChangePassword = true;
+    await rector.save();
+    await sendTemporaryPasswordEmail({
+      to: rector.correo,
+      nombre: [rector.nombre, rector.apellido].filter(Boolean).join(' ').trim() || rector.correo,
+      temporaryPassword
+    });
+    return res.json({ ok: true, message: 'Se envio una clave temporal al correo registrado.' });
+  }
+
+  return res.json({ ok: true, message: 'Si el correo existe, recibiras una clave temporal.' });
 }

@@ -30,6 +30,7 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.1",
     "mysql2": "^3.11.3",
+    "nodemailer": "^6.10.0",
     "sequelize": "^6.37.3",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1"

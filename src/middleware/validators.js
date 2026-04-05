@@ -1,5 +1,6 @@
 ﻿// Reglas de validacion para rutas REST.
 import { body, query, param } from 'express-validator';
+const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 
 const materiasPorCursoValidator = (value) => {
   if (value === undefined) return true;
@@ -31,7 +32,13 @@ export const loginRules = [
 
 export const changePasswordRules = [
   body('currentPassword').isString().isLength({ min: 4 }).withMessage('Clave actual invalida'),
-  body('newPassword').isString().isLength({ min: 4 }).withMessage('Nueva clave invalida')
+  body('newPassword')
+    .isString().withMessage('Nueva clave invalida')
+    .matches(strongPasswordRegex).withMessage('La nueva clave debe tener minimo 8 caracteres, mayuscula, minuscula, numero y caracter especial')
+];
+
+export const requestPasswordResetRules = [
+  body('email').isEmail().withMessage('Email invalido')
 ];
 
 export const qrRules = [

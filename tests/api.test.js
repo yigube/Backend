@@ -199,6 +199,24 @@ test('Login valida payload', async () => {
   expect(res.body.errors).toBeTruthy();
 });
 
+test('Reset password valida email', async () => {
+  const res = await request(app)
+    .post('/auth/reset-password')
+    .send({ email: 'correo-invalido' });
+
+  expect(res.status).toBe(422);
+  expect(Array.isArray(res.body.errors)).toBe(true);
+});
+
+test('Reset password no revela si el correo existe', async () => {
+  const res = await request(app)
+    .post('/auth/reset-password')
+    .send({ email: 'noexiste@demo.com' });
+
+  expect(res.status).toBe(200);
+  expect(res.body).toEqual({ ok: true, message: 'Si el correo existe, recibiras una clave temporal.' });
+});
+
 test('Requiere token para rutas protegidas', async () => {
   const res = await request(app).get('/cursos');
   expect(res.status).toBe(401);
