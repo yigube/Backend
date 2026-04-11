@@ -1736,6 +1736,27 @@ test('Rechaza un segundo registro de asistencia para la misma clase', async () =
   expect(registroDb?.estado).toBe('presente');
 });
 
+test('Reintento con clientRequestId retorna el mismo registro sin duplicar', async () => {
+  const payload = {
+    qr: studentA.qr,
+    cursoId: curso.id,
+    fecha: '2025-01-10',
+    estado: 'presente',
+    clientRequestId: 'offline-retry-001'
+  };
+
+  const first = await registrarAsistencia(teacherToken, payload);
+  expect(first.status).toBe(201);
+
+  const retry = await registrarAsistencia(teacherToken, payload);
+  expect(retry.status).toBe(200);
+  expect(retry.body.idempotent).toBe(true);
+  expect(retry.body.registro.id).toBe(first.body.registro.id);
+
+  const totalRows = await Asistencia.count({ where: { clientRequestId: payload.clientRequestId } });
+  expect(totalRows).toBe(1);
+});
+
 test('Rechaza asistencia si curso no corresponde al estudiante', async () => {
   const res = await registrarAsistencia(teacherToken, {
     qr: studentA.qr,

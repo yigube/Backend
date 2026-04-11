@@ -66,6 +66,7 @@ const normalizeMateriaKey = (value) => String(value || '')
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '');
 const DUPLICATE_ATTENDANCE_ERROR = 'La asistencia ya fue registrada para esta clase';
+const IDEMPOTENCY_REPLAY_MESSAGE = 'Asistencia ya procesada para este clientRequestId';
 const resolveCursoForRequest = async (req, cursoId) => {
   const where = isAdmin(req)
     ? { id: cursoId }
@@ -233,6 +234,7 @@ const filtrarEstudiantesVisiblesDocente = async (req, estudiantes, cursoId, scho
 export async function registrarDesdeQR(req, res) {
   const { qr, cursoId, fecha, presente, estado, tarde, afuera, ausente } = req.body;
   const materiaSeleccionada = String(req.body?.materia || '').trim();
+  const clientRequestId = String(req.body?.clientRequestId || '').trim();
   if (!qr || !cursoId || !fecha) return res.status(400).json({ error: 'qr, cursoId y fecha son requeridos' });
   if (estado && !ESTADOS_ASISTENCIA.includes(String(estado).toLowerCase())) {
     return res.status(400).json({ error: 'estado invalido' });
@@ -304,6 +306,22 @@ export async function registrarDesdeQR(req, res) {
     schoolId,
     materiaId: materia?.id || null
   };
+  if (clientRequestId) {
+    const existingByClientRequestId = await Asistencia.findOne({
+      where: { clientRequestId },
+      include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'], required: false }]
+    });
+    if (existingByClientRequestId) {
+      if (Number(existingByClientRequestId.schoolId) !== Number(schoolId)) {
+        return res.status(409).json({ error: 'clientRequestId ya fue usado en otro colegio' });
+      }
+      return res.status(200).json({
+        message: IDEMPOTENCY_REPLAY_MESSAGE,
+        registro: existingByClientRequestId,
+        idempotent: true
+      });
+    }
+  }
   const existente = await Asistencia.findOne({
     where: asistenciaWhere
   });
@@ -322,6 +340,7 @@ export async function registrarDesdeQR(req, res) {
       ausente: flagsEstado.ausente,
       estudianteId: estudiante.id,
       cursoId,
+      clientRequestId: clientRequestId || null,
       materiaId: materia?.id || null,
       periodoId: periodo.id,
       schoolId
@@ -339,7 +358,8 @@ export async function registrarDesdeQR(req, res) {
           schoolId,
           fecha: registro.fecha,
           presente: registro.presente,
-          estado: registro.estado
+          estado: registro.estado,
+          clientRequestId: registro.clientRequestId || null
         };
         io.emit('asistencia:registrada', eventPayload);
         io.emit('attendance:created', eventPayload);
@@ -347,6 +367,19 @@ export async function registrarDesdeQR(req, res) {
     } catch {}
     res.status(201).json({ message: 'Asistencia registrada', registro });
   } catch (e) {
+    if (clientRequestId && e.name === 'SequelizeUniqueConstraintError') {
+      const replay = await Asistencia.findOne({
+        where: { clientRequestId },
+        include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'], required: false }]
+      });
+      if (replay && Number(replay.schoolId) === Number(schoolId)) {
+        return res.status(200).json({
+          message: IDEMPOTENCY_REPLAY_MESSAGE,
+          registro: replay,
+          idempotent: true
+        });
+      }
+    }
     if (e.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ error: DUPLICATE_ATTENDANCE_ERROR });
     }

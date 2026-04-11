@@ -101,6 +101,7 @@ export class Asistencia extends Model {}
 Asistencia.init({
   fecha: { type: DataTypes.DATEONLY, allowNull: false },
   horaRegistro: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  clientRequestId: { type: DataTypes.STRING(120), allowNull: true, unique: true },
   materiaId: { type: DataTypes.INTEGER, allowNull: true },
   estado: { type: DataTypes.STRING, allowNull: false, defaultValue: 'presente' },
   presente: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },

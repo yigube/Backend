@@ -45,6 +45,7 @@ export const qrRules = [
   body('qr').isString().notEmpty(),
   body('cursoId').isInt({ min: 1 }),
   body('fecha').isISO8601(),
+  body('clientRequestId').optional({ values: 'falsy' }).isString().trim().notEmpty().isLength({ max: 120 }),
   body('presente').optional().isBoolean(),
   body('tarde').optional().isBoolean(),
   body('afuera').optional().isBoolean(),
