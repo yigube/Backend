@@ -24,10 +24,6 @@ if (!process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET es requerido para iniciar el servidor.');
 }
 
-if (!process.env.JWT_SECRET) {
-  console.warn('ADVERTENCIA: JWT_SECRET no definido; se usara un valor inseguro "dev".');
-}
-
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(express.json({ limit: process.env.BODY_LIMIT || '512kb' }));
 app.use(morgan('dev'));

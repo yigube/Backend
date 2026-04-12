@@ -25,5 +25,5 @@ Ver detalles en instrucciones del chat.
 
 ## Novedades v2
 - Validaciones con express-validator
-- Roles (admin/docente) con `requireRole`
-- Socket.IO: evento `asistencia:registrada`
+- Roles (`admin`, `rector`, `coordinador`, `docente`) con `requireRole`
+- Socket.IO: eventos `asistencia:registrada` y `attendance:created`

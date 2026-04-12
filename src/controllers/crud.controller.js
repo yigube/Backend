@@ -9,6 +9,7 @@ import {
   Usuario,
   CursoDocente,
   Colegio,
+  Sede,
   Rector,
   Materia,
   DocenteCursoMateria,
@@ -18,175 +19,25 @@ import {
 import { normalizeEstadoAsistencia } from '../utils/asistenciaAggregation.js';
 import { sendTemporaryPasswordEmail } from '../utils/email.js';
 
-const isDocente = (req) => req.user?.rol === 'docente';
-const canManageAcrossSchools = (req) => req.user?.rol === 'admin' && !normalizedSchoolId(req.user?.schoolId);
-const normalizedSchoolId = (value) => {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : null;
-};
-const getUserSchoolId = (req) => normalizedSchoolId(req.user?.schoolId);
-const resolveManagedSchoolId = (req, explicitValue = null) => {
-  const explicitSchoolId = normalizedSchoolId(explicitValue);
-  if (canManageAcrossSchools(req)) return explicitSchoolId || getUserSchoolId(req);
-  return getUserSchoolId(req);
-};
-const ensureManagedSchoolId = (req, res, explicitValue = null) => {
-  const schoolId = resolveManagedSchoolId(req, explicitValue);
-  if (schoolId) return schoolId;
-  res.status(400).json({ error: 'schoolId requerido para administradores' });
-  return null;
-};
-const getDocenteCursoIds = async ({ req, schoolId = getUserSchoolId(req), transaction } = {}) => {
-  if (!isDocente(req)) return [];
-  const where = { usuarioId: req.user.id };
-  if (schoolId) where.schoolId = schoolId;
-  const rows = await CursoDocente.findAll({
-    where,
-    attributes: ['cursoId'],
-    transaction,
-    raw: true
-  });
-  return Array.from(new Set(
-    rows
-      .map((item) => Number(item?.cursoId))
-      .filter((id) => Number.isInteger(id) && id > 0)
-  ));
-};
-const docenteTieneCursoAsignado = async ({ req, cursoId, schoolId = getUserSchoolId(req), transaction } = {}) => {
-  if (!isDocente(req)) return true;
-  const parsedCursoId = Number(cursoId);
-  if (!Number.isInteger(parsedCursoId) || parsedCursoId <= 0) return false;
-  const where = { usuarioId: req.user.id, cursoId: parsedCursoId };
-  if (schoolId) where.schoolId = schoolId;
-  const assigned = await CursoDocente.findOne({
-    where,
-    attributes: ['cursoId'],
-    transaction
-  });
-  return Boolean(assigned);
-};
-const getDocenteMateriaIdsByCurso = async ({ req, cursoIds = [], schoolId = getUserSchoolId(req), transaction } = {}) => {
-  if (!isDocente(req)) return new Map();
-  const normalizedCursoIds = normalizedIds(cursoIds);
-  if (!normalizedCursoIds.length) return new Map();
-  const where = {
-    usuarioId: req.user.id,
-    cursoId: { [Op.in]: normalizedCursoIds }
-  };
-  if (schoolId) where.schoolId = schoolId;
-  const rows = await DocenteCursoMateria.findAll({
-    where,
-    attributes: ['cursoId', 'materiaId'],
-    transaction,
-    raw: true
-  });
-  const materiaIdsByCurso = new Map();
-  rows.forEach((item) => {
-    const cursoId = Number(item?.cursoId);
-    const materiaId = Number(item?.materiaId);
-    if (!Number.isInteger(cursoId) || cursoId <= 0 || !Number.isInteger(materiaId) || materiaId <= 0) return;
-    if (!materiaIdsByCurso.has(cursoId)) materiaIdsByCurso.set(cursoId, new Set());
-    materiaIdsByCurso.get(cursoId).add(materiaId);
-  });
-  return materiaIdsByCurso;
-};
-const filterVisibleEstudiantesForDocente = async ({ req, schoolId = getUserSchoolId(req), estudiantes = [], transaction } = {}) => {
-  if (!isDocente(req)) return { estudiantes, materiaLinks: [] };
-  const cursoIds = normalizedIds(estudiantes.map((item) => item?.cursoId));
-  if (!cursoIds.length) return { estudiantes: [], materiaLinks: [] };
+import {
+  canManageAcrossSchools,
+  docentePuedeGestionarEstudiante,
+  docenteTieneCursoAsignado,
+  ensureManagedSchoolId,
+  filterVisibleEstudiantesForDocente,
+  generateTemporaryPassword,
+  getDocenteCursoIds,
+  getUserSchoolId,
+  isDocente,
+  NIVEL_VALUES,
+  normalizedIds,
+  normalizeNivel,
+  normalizeSedeId,
+  normalizedSchoolId,
+  normalizeMateriaKey,
+  resolveSedeForSchool
+} from './crud.helpers.js';
 
-  const materiaIdsByCurso = await getDocenteMateriaIdsByCurso({ req, cursoIds, schoolId, transaction });
-  if (!materiaIdsByCurso.size) return { estudiantes: [], materiaLinks: [] };
-
-  const estudianteIds = normalizedIds(estudiantes.map((item) => item?.id));
-  if (!estudianteIds.length) return { estudiantes: [], materiaLinks: [] };
-
-  const materiaLinks = await EstudianteMateria.findAll({
-    where: {
-      estudianteId: { [Op.in]: estudianteIds },
-      cursoId: { [Op.in]: cursoIds },
-      ...(schoolId ? { schoolId } : {})
-    },
-    include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }],
-    transaction
-  });
-
-  const materiaLinksByEstudiante = new Map();
-  materiaLinks.forEach((link) => {
-    const estudianteId = Number(link?.estudianteId);
-    if (!Number.isInteger(estudianteId) || estudianteId <= 0) return;
-    const current = materiaLinksByEstudiante.get(estudianteId) || [];
-    current.push(link);
-    materiaLinksByEstudiante.set(estudianteId, current);
-  });
-
-  const estudianteIdsVisibles = new Set();
-  const materiaLinksFiltrados = [];
-  materiaLinksByEstudiante.forEach((rows, estudianteId) => {
-    const hasRows = rows.length > 0;
-    const docenteComparteAlgunaMateria = hasRows && rows.some((link) => {
-      const cursoId = Number(link?.cursoId);
-      const materiaId = Number(link?.materiaId);
-      const materiaIds = materiaIdsByCurso.get(cursoId);
-      return Boolean(materiaIds && materiaIds.has(materiaId));
-    });
-    if (!docenteComparteAlgunaMateria) return;
-    estudianteIdsVisibles.add(estudianteId);
-    materiaLinksFiltrados.push(...rows.filter((link) => {
-      const cursoId = Number(link?.cursoId);
-      const materiaId = Number(link?.materiaId);
-      const materiaIds = materiaIdsByCurso.get(cursoId);
-      return Boolean(materiaIds && materiaIds.has(materiaId));
-    }));
-  });
-
-  return {
-    estudiantes: estudiantes.filter((item) => estudianteIdsVisibles.has(Number(item?.id))),
-    materiaLinks: materiaLinksFiltrados
-  };
-};
-const docentePuedeGestionarEstudiante = async ({ req, estudiante, schoolId = getUserSchoolId(req), transaction } = {}) => {
-  if (!isDocente(req)) return true;
-  if (!estudiante?.id || !estudiante?.cursoId) return false;
-  const materiaIdsByCurso = await getDocenteMateriaIdsByCurso({
-    req,
-    cursoIds: [estudiante.cursoId],
-    schoolId,
-    transaction
-  });
-  const materiaIds = materiaIdsByCurso.get(Number(estudiante.cursoId));
-  if (!materiaIds || !materiaIds.size) return false;
-
-  const rows = await EstudianteMateria.findAll({
-    where: {
-      estudianteId: estudiante.id,
-      cursoId: estudiante.cursoId,
-      ...(schoolId ? { schoolId } : {})
-    },
-    attributes: ['materiaId'],
-    transaction,
-    raw: true
-  });
-
-  return rows.length > 0 && rows.every((item) => materiaIds.has(Number(item?.materiaId)));
-};
-const normalizedIds = (values) => {
-  if (!Array.isArray(values)) return [];
-  const set = new Set();
-  values.forEach((value) => {
-    const n = Number(value);
-    if (Number.isInteger(n) && n > 0) set.add(n);
-  });
-  return Array.from(set);
-};
-const generateTemporaryPassword = (length = 10) => {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
-  let next = '';
-  for (let i = 0; i < length; i += 1) {
-    next += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-  }
-  return next;
-};
 const buildFaltasResumenByEstudiante = async ({ req, estudiantes = [], schoolId = getUserSchoolId(req), transaction } = {}) => {
   const estudianteIds = normalizedIds(estudiantes.map((item) => item?.id));
   const cursoIds = normalizedIds(estudiantes.map((item) => item?.cursoId));
@@ -255,11 +106,6 @@ const buildFaltasResumenByEstudiante = async ({ req, estudiantes = [], schoolId 
     ])
   );
 };
-const normalizeMateriaKey = (value) => String(value || '')
-  .trim()
-  .toLowerCase()
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '');
 const normalizeMateriasPorCurso = (value, { includeEmpty = false } = {}) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const result = {};
@@ -715,12 +561,62 @@ const serializeColegio = (colegio) => {
   };
 };
 
+const resolveNivelInput = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  return normalizeNivel(value);
+};
+
+const resolveSedeInput = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  return normalizeSedeId(value);
+};
+
+const ensureSedeFromPayload = async ({ schoolId, sedeId, transaction } = {}) => {
+  if (sedeId === undefined) return undefined;
+  if (sedeId === null) return null;
+  const sede = await resolveSedeForSchool({ schoolId, sedeId, transaction });
+  if (!sede) throw new Error('La sede no pertenece al colegio seleccionado');
+  return Number(sede.id);
+};
+
+const ensureCursosConsistentWithDocenteScope = ({ cursos = [], docenteNivel, docenteSedeId } = {}) => {
+  if (!Array.isArray(cursos) || cursos.length === 0) return;
+  if (docenteNivel) {
+    const mismatchNivel = cursos.some((curso) => normalizeNivel(curso?.nivel) && normalizeNivel(curso?.nivel) !== docenteNivel);
+    if (mismatchNivel) throw new Error('Uno o mas cursos no coinciden con el nivel del docente');
+  }
+  if (docenteSedeId) {
+    const mismatchSede = cursos.some((curso) => {
+      const cursoSedeId = normalizeSedeId(curso?.sedeId);
+      return cursoSedeId && cursoSedeId !== docenteSedeId;
+    });
+    if (mismatchSede) throw new Error('Uno o mas cursos no coinciden con la sede del docente');
+  }
+};
+
 /** Crea un curso asociado al colegio del usuario. Si es docente, queda asignado a el mismo. */
 export async function crearCurso(req, res){
   // Admin puede crear en otro colegio; docentes/otros quedan en su propio colegio.
   const schoolId = ensureManagedSchoolId(req, res, req.body.schoolId);
   if (!schoolId) return;
-  const curso = await Curso.create({ ...req.body, schoolId });
+  const nivel = resolveNivelInput(req.body.nivel);
+  if (nivel === null && req.body.nivel !== null && req.body.nivel !== '') {
+    return res.status(400).json({ error: `nivel invalido. Valores permitidos: ${NIVEL_VALUES.join(', ')}` });
+  }
+  let sedeId = null;
+  try {
+    sedeId = await ensureSedeFromPayload({ schoolId, sedeId: resolveSedeInput(req.body.sedeId) });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  const curso = await Curso.create({
+    ...req.body,
+    schoolId,
+    sedeId: sedeId ?? null,
+    nivel: nivel ?? null
+  });
 
   if (isDocente(req)) {
     // Si crea un docente, se autoasigna el curso para limitar su visibilidad.
@@ -737,7 +633,7 @@ export async function crearCurso(req, res){
 
 /** Lista cursos del colegio actual. Docente ve solo los asignados. */
 export async function listarCursos(req, res){
-  const { q, schoolId: querySchool } = req.query;
+  const { q, schoolId: querySchool, sedeId: querySedeId, nivel: queryNivel } = req.query;
   const querySchoolId = normalizedSchoolId(querySchool);
   const schoolId = canManageAcrossSchools(req)
     ? (querySchoolId || getUserSchoolId(req))
@@ -745,6 +641,10 @@ export async function listarCursos(req, res){
   const where = {};
   if (schoolId) where.schoolId = schoolId;
   if (q) where.nombre = { [Op.like]: `%${q}%` };
+  const sedeId = normalizeSedeId(querySedeId);
+  if (sedeId) where.sedeId = sedeId;
+  const nivel = normalizeNivel(queryNivel);
+  if (nivel) where.nivel = nivel;
 
   if (isDocente(req)) {
     // Se filtra por join para asegurar que solo vea cursos asignados.
@@ -777,6 +677,24 @@ export async function actualizarCurso(req, res){
   }
 
   if (req.body.nombre) curso.nombre = req.body.nombre;
+  if (Object.prototype.hasOwnProperty.call(req.body, 'nivel')) {
+    const nextNivel = resolveNivelInput(req.body.nivel);
+    if (nextNivel === null && req.body.nivel !== null && req.body.nivel !== '') {
+      return res.status(400).json({ error: `nivel invalido. Valores permitidos: ${NIVEL_VALUES.join(', ')}` });
+    }
+    curso.nivel = nextNivel ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'sedeId')) {
+    try {
+      const nextSedeId = await ensureSedeFromPayload({
+        schoolId: Number(curso.schoolId),
+        sedeId: resolveSedeInput(req.body.sedeId)
+      });
+      curso.sedeId = nextSedeId ?? null;
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+  }
   await curso.save();
 
   if (!isDocente(req) && Array.isArray(req.body.docenteIds)) {
@@ -1110,21 +1028,39 @@ export async function eliminarEstudiante(req, res) {
 /** Lista docentes de un colegio (admin puede filtrar por schoolId). */
 export async function listarDocentes(req, res) {
   const querySchoolId = normalizedSchoolId(req.query.schoolId);
+  const querySedeId = normalizeSedeId(req.query.sedeId);
+  const queryNivel = normalizeNivel(req.query.nivel);
   const schoolId = canManageAcrossSchools(req)
     ? (querySchoolId || getUserSchoolId(req))
     : ((!isDocente(req) && querySchoolId) ? querySchoolId : getUserSchoolId(req));
+  const docenteWhere = schoolId ? { schoolId, rol: 'docente' } : { rol: 'docente' };
+  if (querySedeId) docenteWhere.sedeId = querySedeId;
+  if (queryNivel) docenteWhere.nivel = queryNivel;
   const docentes = await Usuario.findAll({
-    where: schoolId ? { schoolId, rol: 'docente' } : { rol: 'docente' },
-    attributes: ['id', 'nombre', 'email', 'schoolId'],
+    where: docenteWhere,
+    attributes: ['id', 'nombre', 'email', 'schoolId', 'sedeId', 'nivel'],
     include: [{
+      model: Sede,
+      as: 'sede',
+      attributes: ['id', 'nombre'],
+      required: false
+    }, {
       model: Curso,
       as: 'cursos',
-      attributes: ['id', 'nombre', 'schoolId'],
+      attributes: ['id', 'nombre', 'schoolId', 'sedeId', 'nivel'],
       through: { attributes: [] }
     }]
   });
 
-  const docenteIds = docentes.map((docente) => Number(docente.id)).filter((id) => id > 0);
+  const docentesFiltrados = querySedeId || queryNivel
+    ? docentes.filter((docente) => {
+      if (querySedeId && Number(docente?.sedeId) !== Number(querySedeId)) return false;
+      if (queryNivel && normalizeNivel(docente?.nivel) !== queryNivel) return false;
+      return true;
+    })
+    : docentes;
+
+  const docenteIds = docentesFiltrados.map((docente) => Number(docente.id)).filter((id) => id > 0);
   const materiaLinks = docenteIds.length
     ? await DocenteCursoMateria.findAll({
       where: schoolId
@@ -1135,26 +1071,39 @@ export async function listarDocentes(req, res) {
     })
     : [];
 
-  res.json(mapMateriasToDocentesCursos(docentes, materiaLinks));
+  res.json(mapMateriasToDocentesCursos(docentesFiltrados, materiaLinks));
 }
 
 /** Lista cursos disponibles para asignar a docentes por colegio (solo admin). */
 export async function listarCursosDisponiblesDocente(req, res) {
   const querySchoolId = normalizedSchoolId(req.query.schoolId);
+  const querySedeId = normalizeSedeId(req.query.sedeId);
+  const queryNivel = normalizeNivel(req.query.nivel);
   const schoolId = canManageAcrossSchools(req)
     ? (querySchoolId || getUserSchoolId(req))
     : getUserSchoolId(req);
+  const where = schoolId ? { schoolId } : {};
+  if (querySedeId) where.sedeId = querySedeId;
+  if (queryNivel) where.nivel = queryNivel;
   const cursos = await Curso.findAll({
-    where: schoolId ? { schoolId } : {},
-    attributes: ['id', 'nombre', 'schoolId'],
-    order: [['nombre', 'ASC']]
+    where,
+    attributes: ['id', 'nombre', 'schoolId', 'sedeId', 'nivel'],
+    include: [{
+      model: Sede,
+      as: 'sede',
+      attributes: ['id', 'nombre'],
+      required: false
+    }]
   });
+  cursos.sort((a, b) => String(a?.nombre || '').localeCompare(String(b?.nombre || ''), undefined, { sensitivity: 'base' }));
   res.json(cursos);
 }
 
 /** Lista todos los cursos de un colegio especifico para interfaces de asignacion. */
 export async function listarCursosPorColegio(req, res) {
   const schoolId = normalizedSchoolId(req.params.schoolId);
+  const querySedeId = normalizeSedeId(req.query.sedeId);
+  const queryNivel = normalizeNivel(req.query.nivel);
   if (!schoolId) return res.status(400).json({ error: 'schoolId invalido' });
 
   if (!canManageAcrossSchools(req) && Number(req.user.schoolId) !== schoolId) {
@@ -1162,11 +1111,107 @@ export async function listarCursosPorColegio(req, res) {
   }
 
   const cursos = await Curso.findAll({
-    where: { schoolId },
-    attributes: ['id', 'nombre', 'schoolId'],
+    where: {
+      schoolId,
+      ...(querySedeId ? { sedeId: querySedeId } : {}),
+      ...(queryNivel ? { nivel: queryNivel } : {})
+    },
+    attributes: ['id', 'nombre', 'schoolId', 'sedeId', 'nivel'],
+    include: [{
+      model: Sede,
+      as: 'sede',
+      attributes: ['id', 'nombre'],
+      required: false
+    }],
     order: [['nombre', 'ASC']]
   });
   res.json(cursos);
+}
+
+/** Lista sedes del colegio actual (admin puede filtrar por schoolId). */
+export async function listarSedes(req, res) {
+  const querySchoolId = normalizedSchoolId(req.query.schoolId);
+  const schoolId = canManageAcrossSchools(req)
+    ? (querySchoolId || getUserSchoolId(req))
+    : ((!isDocente(req) && querySchoolId) ? querySchoolId : getUserSchoolId(req));
+  const where = schoolId ? { schoolId } : {};
+  const query = normalizeOptionalText(req.query.q);
+  if (query) where.nombre = { [Op.like]: `%${query}%` };
+
+  const data = await Sede.findAll({
+    where,
+    attributes: ['id', 'nombre', 'schoolId'],
+    order: [['nombre', 'ASC']]
+  });
+  res.json(data);
+}
+
+/** Crea una sede para el colegio actual. */
+export async function crearSede(req, res) {
+  const schoolId = ensureManagedSchoolId(req, res, req.body.schoolId);
+  if (!schoolId) return;
+  const nombre = normalizeOptionalText(req.body.nombre);
+  if (!nombre) return res.status(400).json({ error: 'Nombre de sede invalido' });
+  try {
+    const created = await Sede.create({ nombre, schoolId });
+    return res.status(201).json(created);
+  } catch (e) {
+    if (e instanceof UniqueConstraintError) {
+      return res.status(409).json({ error: mapUniqueConstraintMessage(e) });
+    }
+    throw e;
+  }
+}
+
+/** Actualiza nombre de sede. Admin global puede mover de colegio. */
+export async function actualizarSede(req, res) {
+  const where = { id: req.params.id };
+  if (!canManageAcrossSchools(req)) where.schoolId = getUserSchoolId(req);
+  const sede = await Sede.findOne({ where });
+  if (!sede) return res.status(404).json({ error: 'Sede no encontrada' });
+
+  if (Object.prototype.hasOwnProperty.call(req.body, 'nombre')) {
+    const nombre = normalizeOptionalText(req.body.nombre);
+    if (!nombre) return res.status(400).json({ error: 'Nombre de sede invalido' });
+    sede.nombre = nombre;
+  }
+
+  if (canManageAcrossSchools(req) && Object.prototype.hasOwnProperty.call(req.body, 'schoolId')) {
+    const nextSchoolId = normalizedSchoolId(req.body.schoolId);
+    if (!nextSchoolId) return res.status(400).json({ error: 'schoolId invalido' });
+    sede.schoolId = nextSchoolId;
+  }
+
+  try {
+    await sede.save();
+    return res.json(sede);
+  } catch (e) {
+    if (e instanceof UniqueConstraintError) {
+      return res.status(409).json({ error: mapUniqueConstraintMessage(e) });
+    }
+    throw e;
+  }
+}
+
+/** Elimina una sede si no esta en uso por cursos/docentes. */
+export async function eliminarSede(req, res) {
+  const where = { id: req.params.id };
+  if (!canManageAcrossSchools(req)) where.schoolId = getUserSchoolId(req);
+  const sede = await Sede.findOne({ where });
+  if (!sede) return res.status(404).json({ error: 'Sede no encontrada' });
+
+  const [cursosCount, docentesCount] = await Promise.all([
+    Curso.count({ where: { sedeId: sede.id } }),
+    Usuario.count({ where: { sedeId: sede.id, rol: 'docente' } })
+  ]);
+  if (cursosCount > 0 || docentesCount > 0) {
+    return res.status(409).json({
+      error: 'No se puede eliminar la sede porque tiene cursos o docentes asociados'
+    });
+  }
+
+  await sede.destroy();
+  res.json({ ok: true });
 }
 
 /** Crea un periodo academico en el colegio actual. */
@@ -1374,18 +1419,52 @@ export async function crearDocente(req, res) {
   const passwordHash = await bcrypt.hash(password, 10);
   const schoolId = ensureManagedSchoolId(req, res, bodySchool);
   if (!schoolId) return;
+  const nivel = resolveNivelInput(req.body.nivel);
+  if (nivel === null && req.body.nivel !== null && req.body.nivel !== '') {
+    return res.status(400).json({ error: `nivel invalido. Valores permitidos: ${NIVEL_VALUES.join(', ')}` });
+  }
+  let sedeId = null;
+  try {
+    sedeId = await ensureSedeFromPayload({
+      schoolId,
+      sedeId: resolveSedeInput(req.body.sedeId)
+    });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
   const cursoIdsNormalizados = normalizedIds(cursoIds);
   let cursos = [];
 
   if (cursoIdsNormalizados.length) {
     // Valida cursos antes de crear el docente para evitar registros huerfanos.
-    cursos = await Curso.findAll({ where: { id: { [Op.in]: cursoIdsNormalizados }, schoolId } });
+    cursos = await Curso.findAll({
+      where: { id: { [Op.in]: cursoIdsNormalizados }, schoolId },
+      attributes: ['id', 'nombre', 'sedeId', 'nivel']
+    });
     if (cursos.length !== cursoIdsNormalizados.length) {
       return res.status(400).json({ error: 'Uno o mas cursos no pertenecen al colegio seleccionado' });
     }
+    try {
+      ensureCursosConsistentWithDocenteScope({
+        cursos,
+        docenteNivel: nivel ?? null,
+        docenteSedeId: sedeId ?? null
+      });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
   }
 
-  const docente = await Usuario.create({ nombre, email, passwordHash, rol: 'docente', schoolId, mustChangePassword: false });
+  const docente = await Usuario.create({
+    nombre,
+    email,
+    passwordHash,
+    rol: 'docente',
+    schoolId,
+    sedeId: sedeId ?? null,
+    nivel: nivel ?? null,
+    mustChangePassword: false
+  });
 
   if (cursos.length) {
     // Vincula cursos existentes del mismo colegio.
@@ -1400,7 +1479,7 @@ export async function crearDocente(req, res) {
     preserveUnspecifiedCourses: false
   });
 
-  const cursosDocente = await docente.getCursos({ attributes: ['id', 'nombre'] });
+  const cursosDocente = await docente.getCursos({ attributes: ['id', 'nombre', 'sedeId', 'nivel'] });
   const materiaLinks = await DocenteCursoMateria.findAll({
     where: { schoolId, usuarioId: docente.id },
     attributes: ['usuarioId', 'cursoId'],
@@ -1426,6 +1505,12 @@ export async function actualizarDocente(req, res) {
     ? (normalizedSchoolId(bodySchool) || docente.schoolId)
     : docente.schoolId;
   const hasMateriasPayload = req.body.materiasPorCurso && typeof req.body.materiasPorCurso === 'object';
+  const hasNivelField = Object.prototype.hasOwnProperty.call(req.body, 'nivel');
+  const hasSedeField = Object.prototype.hasOwnProperty.call(req.body, 'sedeId');
+  const parsedNivel = hasNivelField ? resolveNivelInput(req.body.nivel) : undefined;
+  if (hasNivelField && parsedNivel === null && req.body.nivel !== null && req.body.nivel !== '') {
+    return res.status(400).json({ error: `nivel invalido. Valores permitidos: ${NIVEL_VALUES.join(', ')}` });
+  }
   const schoolIdsToCleanup = normalizedIds([previousSchoolId, targetSchoolId]);
   let cursosDocente = [];
 
@@ -1438,18 +1523,52 @@ export async function actualizarDocente(req, res) {
         docente.mustChangePassword = true;
       }
       docente.schoolId = targetSchoolId;
+      if (hasNivelField) {
+        docente.nivel = parsedNivel ?? null;
+      }
+
+      if (hasSedeField) {
+        docente.sedeId = await ensureSedeFromPayload({
+          schoolId: targetSchoolId,
+          sedeId: resolveSedeInput(req.body.sedeId),
+          transaction
+        }) ?? null;
+      } else if (previousSchoolId && previousSchoolId !== targetSchoolId) {
+        docente.sedeId = null;
+      }
+
       await docente.save({ transaction });
+      const docenteNivel = normalizeNivel(docente.nivel);
+      const docenteSedeId = normalizeSedeId(docente.sedeId);
 
       if (Array.isArray(cursoIds)) {
         const cursoIdsNormalizados = normalizedIds(cursoIds);
         const cursos = await Curso.findAll({
           where: { id: { [Op.in]: cursoIdsNormalizados }, schoolId: targetSchoolId },
+          attributes: ['id', 'nombre', 'sedeId', 'nivel'],
           transaction
         });
         if (cursos.length !== cursoIdsNormalizados.length) {
           throw new Error('Uno o mas cursos no pertenecen al colegio seleccionado');
         }
+        ensureCursosConsistentWithDocenteScope({
+          cursos,
+          docenteNivel,
+          docenteSedeId
+        });
         await docente.setCursos(cursos, { through: { schoolId: targetSchoolId }, transaction });
+      } else if (previousSchoolId && previousSchoolId !== targetSchoolId) {
+        await docente.setCursos([], { transaction });
+      } else if (hasNivelField || hasSedeField) {
+        const currentCursos = await docente.getCursos({
+          attributes: ['id', 'nombre', 'sedeId', 'nivel'],
+          transaction
+        });
+        ensureCursosConsistentWithDocenteScope({
+          cursos: currentCursos,
+          docenteNivel,
+          docenteSedeId
+        });
       }
 
       if (previousSchoolId && previousSchoolId !== targetSchoolId) {
@@ -1459,8 +1578,11 @@ export async function actualizarDocente(req, res) {
         });
       }
 
-      cursosDocente = await docente.getCursos({ attributes: ['id', 'nombre'], transaction });
-      if (Array.isArray(cursoIds) || hasMateriasPayload || previousSchoolId !== targetSchoolId) {
+      cursosDocente = await docente.getCursos({
+        attributes: ['id', 'nombre', 'sedeId', 'nivel'],
+        transaction
+      });
+      if (Array.isArray(cursoIds) || hasMateriasPayload || previousSchoolId !== targetSchoolId || hasNivelField || hasSedeField) {
         await syncMateriasDocente({
           docenteId: docente.id,
           schoolId: targetSchoolId,
@@ -1473,7 +1595,12 @@ export async function actualizarDocente(req, res) {
       }
     });
   } catch (error) {
-    if (error?.message === 'Uno o mas cursos no pertenecen al colegio seleccionado') {
+    if (
+      error?.message === 'Uno o mas cursos no pertenecen al colegio seleccionado'
+      || error?.message === 'La sede no pertenece al colegio seleccionado'
+      || error?.message === 'Uno o mas cursos no coinciden con el nivel del docente'
+      || error?.message === 'Uno o mas cursos no coinciden con la sede del docente'
+    ) {
       return res.status(400).json({ error: error.message });
     }
     throw error;

@@ -8,6 +8,17 @@ Colegio.init({
   codigoDane: { type: DataTypes.STRING, allowNull: true, unique: true }
 }, { sequelize, modelName: 'colegio' });
 
+export class Sede extends Model {}
+Sede.init({
+  nombre: { type: DataTypes.STRING, allowNull: false },
+  schoolId: { type: DataTypes.INTEGER, allowNull: false }
+}, {
+  sequelize,
+  modelName: 'sede',
+  tableName: 'sedes',
+  indexes: [{ unique: true, fields: ['school_id', 'nombre'] }]
+});
+
 export class Rector extends Model {}
 Rector.init({
   schoolId: { type: DataTypes.INTEGER, allowNull: false, unique: true },
@@ -28,13 +39,17 @@ Usuario.init({
   passwordHash: { type: DataTypes.STRING, allowNull: false },
   mustChangePassword: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   rol: { type: DataTypes.ENUM('docente', 'admin', 'rector', 'coordinador'), allowNull: false, defaultValue: 'docente' },
-  schoolId: { type: DataTypes.INTEGER, allowNull: true }
+  schoolId: { type: DataTypes.INTEGER, allowNull: true },
+  sedeId: { type: DataTypes.INTEGER, allowNull: true },
+  nivel: { type: DataTypes.ENUM('primaria', 'secundaria'), allowNull: true }
 }, { sequelize, modelName: 'usuario' });
 
 export class Curso extends Model {}
 Curso.init({
   nombre: { type: DataTypes.STRING, allowNull: false },
-  schoolId: { type: DataTypes.INTEGER, allowNull: false }
+  schoolId: { type: DataTypes.INTEGER, allowNull: false },
+  sedeId: { type: DataTypes.INTEGER, allowNull: true },
+  nivel: { type: DataTypes.ENUM('primaria', 'secundaria'), allowNull: true }
 }, { sequelize, modelName: 'curso' });
 
 export class CursoDocente extends Model {}
@@ -117,11 +132,18 @@ Usuario.belongsTo(Colegio, { foreignKey: { allowNull: true, name: 'schoolId' } }
 Colegio.hasOne(Rector, { as: 'rector', foreignKey: { allowNull: false, name: 'schoolId' }, onDelete: 'CASCADE' });
 Rector.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' }, onDelete: 'CASCADE' });
 
+Colegio.hasMany(Sede, { as: 'sedes', foreignKey: { allowNull: false, name: 'schoolId' }, onDelete: 'CASCADE' });
+Sede.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' }, onDelete: 'CASCADE' });
+
 Colegio.hasMany(Curso, { foreignKey: { allowNull: false, name: 'schoolId' } });
 Curso.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
+Sede.hasMany(Curso, { as: 'cursos', foreignKey: { allowNull: true, name: 'sedeId' }, onDelete: 'SET NULL' });
+Curso.belongsTo(Sede, { as: 'sede', foreignKey: { allowNull: true, name: 'sedeId' }, onDelete: 'SET NULL' });
 
 Curso.belongsToMany(Usuario, { through: CursoDocente, as: 'docentes' });
 Usuario.belongsToMany(Curso, { through: CursoDocente, as: 'cursos' });
+Sede.hasMany(Usuario, { as: 'docentes', foreignKey: { allowNull: true, name: 'sedeId' }, onDelete: 'SET NULL' });
+Usuario.belongsTo(Sede, { as: 'sede', foreignKey: { allowNull: true, name: 'sedeId' }, onDelete: 'SET NULL' });
 
 Colegio.hasMany(Materia, { foreignKey: { allowNull: false, name: 'schoolId' } });
 Materia.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } });
@@ -167,6 +189,7 @@ Asistencia.belongsTo(Materia, { as: 'materia', foreignKey: { allowNull: true, na
 
 export default {
   Colegio,
+  Sede,
   Rector,
   Usuario,
   Curso,

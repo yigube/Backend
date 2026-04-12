@@ -1,6 +1,7 @@
 ﻿// Reglas de validacion para rutas REST.
 import { body, query, param } from 'express-validator';
 const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+const NIVEL_VALUES = ['primaria', 'secundaria'];
 
 const materiasPorCursoValidator = (value) => {
   if (value === undefined) return true;
@@ -56,12 +57,16 @@ export const qrRules = [
 
 export const crearCursoRules = [
   body('nombre').isString().notEmpty(),
-  body('schoolId').optional().isInt({ min: 1 })
+  body('schoolId').optional().isInt({ min: 1 }),
+  body('sedeId').optional({ values: 'falsy' }).isInt({ min: 1 }).withMessage('sedeId invalido'),
+  body('nivel').optional({ values: 'falsy' }).isIn(NIVEL_VALUES).withMessage('nivel invalido')
 ];
 export const actualizarCursoRules = [
   param('id').isInt({ min: 1 }),
   body('nombre').optional().isString().notEmpty(),
-  body('docenteIds').optional().isArray()
+  body('docenteIds').optional().isArray(),
+  body('sedeId').optional({ values: 'falsy' }).isInt({ min: 1 }).withMessage('sedeId invalido'),
+  body('nivel').optional({ values: 'falsy' }).isIn(NIVEL_VALUES).withMessage('nivel invalido')
 ];
 export const crearEstudianteRules = [
   body('nombres').isString().notEmpty(),
@@ -226,6 +231,17 @@ export const listarCursosColegioRules = [
   param('schoolId').isInt({ min: 1 })
 ];
 
+export const crearSedeRules = [
+  body('nombre').isString().trim().notEmpty().withMessage('Nombre de sede invalido'),
+  body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido')
+];
+
+export const actualizarSedeRules = [
+  param('id').isInt({ min: 1 }),
+  body('nombre').optional().isString().trim().notEmpty().withMessage('Nombre de sede invalido'),
+  body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido')
+];
+
 export const crearDocenteRules = [
   body('nombre')
     .isString().withMessage('Nombre requerido')
@@ -240,7 +256,9 @@ export const crearDocenteRules = [
   body('cursoIds').optional().isArray(),
   body('cursoIds.*').optional().isInt({ min: 1 }).withMessage('cursoIds debe contener IDs validos'),
   body('materiasPorCurso').optional().custom(materiasPorCursoValidator),
-  body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido')
+  body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido'),
+  body('sedeId').optional({ values: 'falsy' }).isInt({ min: 1 }).withMessage('sedeId invalido'),
+  body('nivel').optional({ values: 'falsy' }).isIn(NIVEL_VALUES).withMessage('nivel invalido')
 ];
 
 export const actualizarDocenteRules = [
@@ -260,7 +278,9 @@ export const actualizarDocenteRules = [
   body('cursoIds').optional().isArray(),
   body('cursoIds.*').optional().isInt({ min: 1 }).withMessage('cursoIds debe contener IDs validos'),
   body('materiasPorCurso').optional().custom(materiasPorCursoValidator),
-  body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido')
+  body('schoolId').optional().isInt({ min: 1 }).withMessage('schoolId invalido'),
+  body('sedeId').optional({ values: 'falsy' }).isInt({ min: 1 }).withMessage('sedeId invalido'),
+  body('nivel').optional({ values: 'falsy' }).isIn(NIVEL_VALUES).withMessage('nivel invalido')
 ];
 
 export const resetDocentePasswordRules = [
