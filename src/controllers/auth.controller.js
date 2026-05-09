@@ -121,7 +121,7 @@ export async function changePassword(req, res) {
 export async function requestPasswordReset(req, res) {
   const { email } = req.body;
   const emailNorm = String(email || '').trim().toLowerCase();
-  const genericResponse = { ok: true, message: 'Si el correo existe, recibiras una clave temporal.' };
+  const successResponse = { ok: true, message: 'Si el correo existe, recibiras una clave temporal.' };
 
   const [user, rector] = await Promise.all([
     Usuario.findOne({ where: { email: emailNorm } }),
@@ -129,7 +129,7 @@ export async function requestPasswordReset(req, res) {
   ]);
 
   if (!user && !rector) {
-    return res.json(genericResponse);
+    return res.status(404).json({ error: 'El correo no se encuentra registrado' });
   }
 
   try {
@@ -145,7 +145,7 @@ export async function requestPasswordReset(req, res) {
           temporaryPassword
         });
       });
-      return res.json(genericResponse);
+      return res.json(successResponse);
     }
 
     if (rector) {
@@ -160,12 +160,12 @@ export async function requestPasswordReset(req, res) {
           temporaryPassword
         });
       });
-      return res.json(genericResponse);
+      return res.json(successResponse);
     }
   } catch (error) {
     console.error('Password reset delivery error', error?.message || error);
-    return res.json(genericResponse);
+    return res.json(successResponse);
   }
 
-  return res.json(genericResponse);
+  return res.json(successResponse);
 }

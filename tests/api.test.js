@@ -208,13 +208,13 @@ test('Reset password valida email', async () => {
   expect(Array.isArray(res.body.errors)).toBe(true);
 });
 
-test('Reset password no revela si el correo existe', async () => {
+test('Reset password informa cuando el correo no existe', async () => {
   const res = await request(app)
     .post('/auth/reset-password')
     .send({ email: 'noexiste@demo.com' });
 
-  expect(res.status).toBe(200);
-  expect(res.body).toEqual({ ok: true, message: 'Si el correo existe, recibiras una clave temporal.' });
+  expect(res.status).toBe(404);
+  expect(res.body).toEqual({ error: 'El correo no se encuentra registrado' });
 });
 
 test('Requiere token para rutas protegidas', async () => {
