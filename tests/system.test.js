@@ -60,7 +60,7 @@ test('Flujo completo: admin crea curso/periodo, docente registra asistencias, ge
   const periodoRes = await request(app)
     .post('/periodos')
     .set('Authorization', `Bearer ${adminToken}`)
-    .send({ nombre: 'P1', fechaInicio: '2025-02-01', fechaFin: '2025-02-28' });
+    .send({ nombre: 'P1', fechaInicio: '2025-02-01', fechaFin: '2025-04-11' });
   expect(periodoRes.status).toBe(201);
   const periodoId = periodoRes.body.id;
 

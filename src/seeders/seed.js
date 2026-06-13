@@ -84,12 +84,12 @@ async function seed() {
     Estudiante.create({ nombres: 'Marta', apellidos: 'Quinonez', qr: 'QR-MARTA-004', cursoId: cursoNorte.id })
   ]);
 
-  // 4 periodos de 10 semanas aprox por colegio
+  // 4 periodos consecutivos de 10 semanas por colegio.
   const periodosBase = [
-    { nombre: 'P1', fechaInicio: '2025-02-03', fechaFin: '2025-04-11' },
-    { nombre: 'P2', fechaInicio: '2025-04-28', fechaFin: '2025-07-04' },
-    { nombre: 'P3', fechaInicio: '2025-07-21', fechaFin: '2025-09-26' },
-    { nombre: 'P4', fechaInicio: '2025-10-06', fechaFin: '2025-12-12' }
+    { nombre: 'P1', fechaInicio: '2025-02-03', fechaFin: '2025-04-13' },
+    { nombre: 'P2', fechaInicio: '2025-04-14', fechaFin: '2025-06-22' },
+    { nombre: 'P3', fechaInicio: '2025-06-23', fechaFin: '2025-08-31' },
+    { nombre: 'P4', fechaInicio: '2025-09-01', fechaFin: '2025-11-09' }
   ];
   for (const colegio of colegios) {
     for (const p of periodosBase) {

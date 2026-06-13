@@ -42,7 +42,7 @@ beforeEach(async () => {
   });
 
   cursoBase = await Curso.create({ nombre: 'Matematicas', schoolId: school.id });
-  periodo = await Periodo.create({ nombre: 'P1', fechaInicio: '2025-01-01', fechaFin: '2025-01-31', schoolId: school.id });
+  periodo = await Periodo.create({ nombre: 'P1', fechaInicio: '2025-01-01', fechaFin: '2025-03-11', schoolId: school.id });
   student = await Estudiante.create({ nombres: 'Ana', apellidos: 'Tester', qr: 'UJ-ANA', cursoId: cursoBase.id });
   const materia = await Materia.create({ nombre: 'General', schoolId: school.id });
   await CursoDocente.create({ usuarioId: docente.id, cursoId: cursoBase.id, schoolId: school.id });
@@ -67,7 +67,7 @@ test('Admin gestiona catalogos y ve los cursos creados', async () => {
   const createPeriodo = await request(app)
     .post('/periodos')
     .set('Authorization', `Bearer ${adminToken}`)
-    .send({ nombre: 'P2', fechaInicio: '2025-02-01', fechaFin: '2025-02-28' });
+    .send({ nombre: 'P2', fechaInicio: '2025-03-12', fechaFin: '2025-05-20' });
   expect(createPeriodo.status).toBe(201);
 
   const listCourses = await request(app)

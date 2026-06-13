@@ -3,6 +3,7 @@ import { Op } from 'sequelize';
 import { Asistencia, Estudiante, Curso, Periodo, CursoDocente, DocenteCursoMateria, EstudianteMateria, Materia } from '../models/index.js';
 import { calcularPorcentajeInasistencia } from '../utils/calc.js';
 import { aggregateAttendanceRowsByStudentDate, normalizeEstadoAsistencia } from '../utils/asistenciaAggregation.js';
+import { recordMetric } from '../utils/observability.js';
 
 const ESTADOS_ASISTENCIA = ['presente', 'tarde', 'afuera', 'ausente'];
 const isAdmin = (req) => req.user?.rol === 'admin';
@@ -313,8 +314,10 @@ export async function registrarDesdeQR(req, res) {
     });
     if (existingByClientRequestId) {
       if (Number(existingByClientRequestId.schoolId) !== Number(schoolId)) {
+        recordMetric('syncErrorsTotal');
         return res.status(409).json({ error: 'clientRequestId ya fue usado en otro colegio' });
       }
+      recordMetric('asistenciaIdempotentReplayTotal');
       return res.status(200).json({
         message: IDEMPOTENCY_REPLAY_MESSAGE,
         registro: existingByClientRequestId,
@@ -326,6 +329,7 @@ export async function registrarDesdeQR(req, res) {
     where: asistenciaWhere
   });
   if (existente) {
+    recordMetric('asistenciaDuplicadaTotal');
     return res.status(409).json({ error: DUPLICATE_ATTENDANCE_ERROR });
   }
 
@@ -365,6 +369,7 @@ export async function registrarDesdeQR(req, res) {
         io.emit('attendance:created', eventPayload);
       }
     } catch {}
+    recordMetric('asistenciaRegistradaTotal');
     res.status(201).json({ message: 'Asistencia registrada', registro });
   } catch (e) {
     if (clientRequestId && e.name === 'SequelizeUniqueConstraintError') {
@@ -373,6 +378,7 @@ export async function registrarDesdeQR(req, res) {
         include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'], required: false }]
       });
       if (replay && Number(replay.schoolId) === Number(schoolId)) {
+        recordMetric('asistenciaIdempotentReplayTotal');
         return res.status(200).json({
           message: IDEMPOTENCY_REPLAY_MESSAGE,
           registro: replay,
@@ -381,6 +387,7 @@ export async function registrarDesdeQR(req, res) {
       }
     }
     if (e.name === 'SequelizeUniqueConstraintError') {
+      recordMetric('asistenciaDuplicadaTotal');
       return res.status(409).json({ error: DUPLICATE_ATTENDANCE_ERROR });
     }
     throw e;

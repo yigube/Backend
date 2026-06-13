@@ -1,8 +1,8 @@
 // Rate limit in-memory para endpoints de autenticacion.
-const buckets = new Map();
+const bucketsByLimiter = new Set();
 
 export function resetLoginRateLimitBuckets() {
-  buckets.clear();
+  bucketsByLimiter.forEach((buckets) => buckets.clear());
 }
 
 function createInMemoryRateLimiter({
@@ -11,6 +11,8 @@ function createInMemoryRateLimiter({
   keyGenerator,
   errorMessage
 }) {
+  const buckets = new Map();
+  bucketsByLimiter.add(buckets);
   return (req, res, next) => {
     const key = keyGenerator(req);
     const now = Date.now();

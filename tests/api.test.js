@@ -5,6 +5,7 @@ import { init } from '../src/app.js';
 import { sequelize } from '../src/config/database.js';
 import { Usuario, Colegio, Curso, CursoDocente, Estudiante, EstudianteMateria, Periodo, Rector, Materia, DocenteCursoMateria, Asistencia } from '../src/models/index.js';
 import { resetLoginRateLimitBuckets } from '../src/middleware/rateLimit.js';
+import { resetMetrics } from '../src/utils/observability.js';
 
 let app;
 let school;
@@ -59,6 +60,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   resetLoginRateLimitBuckets();
+  resetMetrics();
   await sequelize.sync({ force: true });
   school = await Colegio.create({ nombre: 'Colegio Test' });
   otherSchool = await Colegio.create({ nombre: 'Colegio Dos' });
@@ -122,8 +124,8 @@ beforeEach(async () => {
   await DocenteCursoMateria.create({ usuarioId: teacherUser.id, cursoId: curso.id, materiaId: defaultMateria.id, schoolId: school.id });
   await EstudianteMateria.create({ estudianteId: studentA.id, cursoId: curso.id, materiaId: defaultMateria.id, schoolId: school.id });
   await EstudianteMateria.create({ estudianteId: studentB.id, cursoId: curso.id, materiaId: defaultMateria.id, schoolId: school.id });
-  periodo = await Periodo.create({ nombre: 'P1', fechaInicio: '2025-01-01', fechaFin: '2025-01-31', schoolId: school.id });
-  await Periodo.create({ nombre: 'P1-Other', fechaInicio: '2025-01-01', fechaFin: '2025-01-31', schoolId: otherSchool.id });
+  periodo = await Periodo.create({ nombre: 'P1', fechaInicio: '2025-01-01', fechaFin: '2025-03-11', schoolId: school.id });
+  await Periodo.create({ nombre: 'P1-Other', fechaInicio: '2025-01-01', fechaFin: '2025-03-11', schoolId: otherSchool.id });
 
   adminToken = await login('admin@demo.com', 'admin123');
   globalAdminToken = await login('admin.global@demo.com', 'admin123');
@@ -140,6 +142,62 @@ test('Login OK', async () => {
   const res = await request(app).post('/auth/login').send({ email: 'docente@demo.com', password: 'doc123' });
   expect(res.status).toBe(200);
   expect(res.body.token).toBeTruthy();
+});
+
+test('Observabilidad expone salud y metricas operativas', async () => {
+  const health = await request(app).get('/health');
+  expect(health.status).toBe(200);
+  expect(health.body).toMatchObject({
+    status: 'ok',
+    service: 'asistencia-backend',
+    database: { status: 'ok' }
+  });
+  expect(health.body.metrics).toHaveProperty('httpRequestsTotal');
+
+  const fecha = '2025-02-01';
+  const first = await registrarAsistencia(teacherToken, {
+    qr: studentA.qr,
+    cursoId: curso.id,
+    fecha,
+    materia: defaultMateria.nombre
+  });
+  expect(first.status).toBe(201);
+
+  const duplicate = await registrarAsistencia(teacherToken, {
+    qr: studentA.qr,
+    cursoId: curso.id,
+    fecha,
+    materia: defaultMateria.nombre
+  });
+  expect(duplicate.status).toBe(409);
+
+  const idempotent = await registrarAsistencia(teacherToken, {
+    qr: studentB.qr,
+    cursoId: curso.id,
+    fecha,
+    materia: defaultMateria.nombre,
+    clientRequestId: 'offline-sync-1'
+  });
+  expect(idempotent.status).toBe(201);
+
+  const replay = await registrarAsistencia(teacherToken, {
+    qr: studentB.qr,
+    cursoId: curso.id,
+    fecha,
+    materia: defaultMateria.nombre,
+    clientRequestId: 'offline-sync-1'
+  });
+  expect(replay.status).toBe(200);
+  expect(replay.body.idempotent).toBe(true);
+
+  const metrics = await request(app).get('/metrics');
+  expect(metrics.status).toBe(200);
+  expect(metrics.body.counters).toMatchObject({
+    asistenciaRegistradaTotal: 2,
+    asistenciaDuplicadaTotal: 1,
+    asistenciaIdempotentReplayTotal: 1
+  });
+  expect(metrics.body.counters.httpRequestsTotal).toBeGreaterThanOrEqual(6);
 });
 
 test('Login admin global sin colegio asignado', async () => {
@@ -383,7 +441,7 @@ test('Coordinador solo gestiona su colegio y puede activar periodos propios', as
   const createPeriodo = await request(app)
     .post('/periodos')
     .set('Authorization', `Bearer ${coordinadorToken}`)
-    .send({ nombre: 'P2', fechaInicio: '2025-02-01', fechaFin: '2025-02-28', schoolId: otherSchool.id });
+    .send({ nombre: 'P2', fechaInicio: '2025-03-12', fechaFin: '2025-05-20', schoolId: otherSchool.id });
   expect(createPeriodo.status).toBe(201);
   expect(createPeriodo.body.schoolId).toBe(school.id);
 });
@@ -409,8 +467,8 @@ test('No permite crear un nuevo periodo con fechas anteriores al ultimo periodo 
     .set('Authorization', `Bearer ${adminToken}`)
     .send({
       nombre: 'Periodo 2',
-      fechaInicio: '2024-12-01T00:00:00',
-      fechaFin: '2024-12-31T23:59:00',
+      fechaInicio: '2024-10-01T00:00:00',
+      fechaFin: '2024-12-09T23:59:00',
       schoolId: school.id
     });
 
@@ -425,7 +483,7 @@ test('No permite crear un periodo que se cruce con otro ya registrado', async ()
     .send({
       nombre: 'Periodo 2',
       fechaInicio: '2025-01-15T00:00:00',
-      fechaFin: '2025-02-15T23:59:00',
+      fechaFin: '2025-03-25T23:59:00',
       schoolId: school.id
     });
 
@@ -433,12 +491,63 @@ test('No permite crear un periodo que se cruce con otro ya registrado', async ()
   expect(res.body).toEqual({ error: 'Las fechas se cruzan con P1. Un periodo posterior debe iniciar despues de que termine el anterior' });
 });
 
+test('No permite crear un periodo con duracion diferente a 10 semanas', async () => {
+  const res = await request(app)
+    .post('/periodos')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Periodo corto',
+      fechaInicio: '2025-03-12T00:00:00',
+      fechaFin: '2025-04-12T23:59:00',
+      schoolId: school.id
+    });
+
+  expect(res.status).toBe(400);
+  expect(res.body).toEqual({ error: 'Cada periodo debe durar exactamente 10 semanas' });
+});
+
+test('No permite crear un periodo si no inicia al dia siguiente del ultimo', async () => {
+  const res = await request(app)
+    .post('/periodos')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Periodo con salto',
+      fechaInicio: '2025-03-13T00:00:00',
+      fechaFin: '2025-05-21T23:59:00',
+      schoolId: school.id
+    });
+
+  expect(res.status).toBe(400);
+  expect(res.body).toEqual({ error: 'El nuevo periodo debe iniciar despues de que termine P1' });
+});
+
+test('No permite crear mas de 4 periodos por año en el mismo colegio', async () => {
+  await Periodo.bulkCreate([
+    { nombre: 'P2', fechaInicio: '2025-03-12T00:00:00', fechaFin: '2025-05-20T23:59:00', schoolId: school.id },
+    { nombre: 'P3', fechaInicio: '2025-05-21T00:00:00', fechaFin: '2025-07-29T23:59:00', schoolId: school.id },
+    { nombre: 'P4', fechaInicio: '2025-07-30T00:00:00', fechaFin: '2025-10-07T23:59:00', schoolId: school.id }
+  ]);
+
+  const res = await request(app)
+    .post('/periodos')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Periodo 5',
+      fechaInicio: '2025-10-08T00:00:00',
+      fechaFin: '2025-12-16T23:59:00',
+      schoolId: school.id
+    });
+
+  expect(res.status).toBe(400);
+  expect(res.body).toEqual({ error: 'Solo se permiten 4 periodos por año' });
+});
+
 test('No permite actualizar un periodo si la fecha de inicio queda posterior a la fecha de fin', async () => {
   const res = await request(app)
     .put(`/periodos/${periodo.id}`)
     .set('Authorization', `Bearer ${adminToken}`)
     .send({
-      fechaInicio: '2025-02-10T00:00:00'
+      fechaInicio: '2025-04-01T00:00:00'
     });
 
   expect(res.status).toBe(400);
@@ -451,8 +560,8 @@ test('No permite actualizar un periodo si la fecha de inicio queda posterior a l
 test('No permite actualizar un periodo para cruzarse con otro periodo del mismo colegio', async () => {
   const segundoPeriodo = await Periodo.create({
     nombre: 'P2',
-    fechaInicio: '2025-02-01T00:00:00',
-    fechaFin: '2025-02-28T23:59:00',
+    fechaInicio: '2025-03-12T00:00:00',
+    fechaFin: '2025-05-20T23:59:00',
     schoolId: school.id
   });
 
@@ -461,14 +570,14 @@ test('No permite actualizar un periodo para cruzarse con otro periodo del mismo 
     .set('Authorization', `Bearer ${adminToken}`)
     .send({
       fechaInicio: '2025-01-20T00:00:00',
-      fechaFin: '2025-02-28T23:59:00'
+      fechaFin: '2025-03-30T23:59:00'
     });
 
   expect(res.status).toBe(400);
   expect(res.body).toEqual({ error: 'Las fechas se cruzan con P1. Un periodo posterior debe iniciar despues de que termine el anterior' });
 
   await segundoPeriodo.reload();
-  expect(new Date(segundoPeriodo.fechaInicio).toISOString().slice(0, 10)).toBe('2025-02-01');
+  expect(new Date(segundoPeriodo.fechaInicio).toISOString().slice(0, 10)).toBe('2025-03-12');
 });
 
 test('Admin crea docente y asigna cursos del colegio seleccionado', async () => {
@@ -1217,6 +1326,118 @@ test('Admin valida unicidad de correo, cedula y telefono del rector', async () =
     });
   expect(dupTelefono.status).toBe(409);
   expect(dupTelefono.body.error).toContain('telefono');
+});
+
+test('Admin crea colegio con cuenta usuario sincronizada para el directivo', async () => {
+  const res = await request(app)
+    .post('/colegios')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Colegio Directivo Usuario',
+      codigoDane: 'DANE-DIR-USR-1',
+      rectorCargo: 'rector',
+      rectorNombre: 'Rector',
+      rectorApellido: 'Sincronizado',
+      rectorCorreo: 'rector.sincronizado@demo.com',
+      rectorCedula: '555111222',
+      rectorTelefono: '3005551111',
+      rectorPassword: 'Rector1!'
+    });
+
+  expect(res.status).toBe(201);
+  const usuario = await Usuario.findOne({ where: { email: 'rector.sincronizado@demo.com' } });
+  expect(usuario).toBeTruthy();
+  expect(usuario.rol).toBe('rector');
+  expect(usuario.schoolId).toBe(res.body.id);
+  expect(usuario.mustChangePassword).toBe(true);
+  expect(await bcrypt.compare('Rector1!', usuario.passwordHash)).toBe(true);
+
+  resetLoginRateLimitBuckets();
+  const loginRes = await request(app)
+    .post('/auth/login')
+    .send({ email: 'rector.sincronizado@demo.com', password: 'Rector1!' });
+  expect(loginRes.status).toBe(200);
+  expect(loginRes.body.user.id).toBe(usuario.id);
+  expect(loginRes.body.user.rol).toBe('rector');
+});
+
+test('Admin actualiza directivo y sincroniza la cuenta usuario asociada', async () => {
+  const createRes = await request(app)
+    .post('/colegios')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Colegio Directivo Actualiza',
+      codigoDane: 'DANE-DIR-USR-2',
+      rectorCargo: 'rector',
+      rectorNombre: 'Rector',
+      rectorApellido: 'Antes',
+      rectorCorreo: 'rector.antes@demo.com',
+      rectorCedula: '555111333',
+      rectorTelefono: '3005552222',
+      rectorPassword: 'Rector1!'
+    });
+  expect(createRes.status).toBe(201);
+
+  const updateRes = await request(app)
+    .put(`/colegios/${createRes.body.id}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      rectorCargo: 'coordinador',
+      rectorNombre: 'Coordinador',
+      rectorApellido: 'Despues',
+      rectorCorreo: 'coordinador.despues@demo.com',
+      rectorCedula: '555111333',
+      rectorTelefono: '3005552222'
+    });
+
+  expect(updateRes.status).toBe(200);
+  expect(await Usuario.findOne({ where: { email: 'rector.antes@demo.com' } })).toBeNull();
+  const usuario = await Usuario.findOne({ where: { email: 'coordinador.despues@demo.com' } });
+  expect(usuario).toBeTruthy();
+  expect(usuario.nombre).toBe('Coordinador Despues');
+  expect(usuario.rol).toBe('coordinador');
+  expect(usuario.schoolId).toBe(createRes.body.id);
+
+  resetLoginRateLimitBuckets();
+  const loginRes = await request(app)
+    .post('/auth/login')
+    .send({ email: 'coordinador.despues@demo.com', password: 'Rector1!' });
+  expect(loginRes.status).toBe(200);
+  expect(loginRes.body.user.rol).toBe('coordinador');
+});
+
+test('Admin elimina perfil directivo y remueve la cuenta usuario sincronizada', async () => {
+  const createRes = await request(app)
+    .post('/colegios')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      nombre: 'Colegio Directivo Elimina',
+      codigoDane: 'DANE-DIR-USR-3',
+      rectorCargo: 'rector',
+      rectorNombre: 'Rector',
+      rectorApellido: 'Eliminar',
+      rectorCorreo: 'rector.eliminar@demo.com',
+      rectorCedula: '555111444',
+      rectorTelefono: '3005553333',
+      rectorPassword: 'Rector1!'
+    });
+  expect(createRes.status).toBe(201);
+
+  const updateRes = await request(app)
+    .put(`/colegios/${createRes.body.id}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({
+      rectorCargo: '',
+      rectorNombre: '',
+      rectorApellido: '',
+      rectorCorreo: '',
+      rectorCedula: '',
+      rectorTelefono: ''
+    });
+
+  expect(updateRes.status).toBe(200);
+  expect(updateRes.body.rector).toBeNull();
+  expect(await Usuario.findOne({ where: { email: 'rector.eliminar@demo.com' } })).toBeNull();
 });
 
 test('Admin recibe mensaje claro cuando el correo del rector es invalido', async () => {

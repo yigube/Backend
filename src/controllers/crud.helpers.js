@@ -210,3 +210,24 @@ export const generateTemporaryPassword = (length = 10) => {
   }
   return next;
 };
+
+export const normalizeOptionalText = (value) => {
+  if (value === undefined || value === null) return null;
+  const nextValue = String(value).trim();
+  return nextValue || null;
+};
+
+export const mapUniqueConstraintMessage = (error) => {
+  const paths = Array.isArray(error?.errors)
+    ? error.errors.map((item) => String(item.path || '').toLowerCase())
+    : [];
+  if (paths.some((path) => path.includes('codigo') || path.includes('dane'))) return 'El codigo DANE ya existe';
+  if (paths.some((path) => path.includes('correo') || path.includes('email'))) return 'El correo del rector ya existe';
+  if (paths.some((path) => path.includes('cedula'))) return 'La cedula del rector ya existe';
+  if (paths.some((path) => path.includes('telefono'))) return 'El telefono del rector ya existe';
+  if (paths.some((path) => path.includes('qr'))) return 'El codigo QR ya existe';
+  if (paths.some((path) => path.includes('codigo_estudiante') || path.includes('codigoestudiante'))) {
+    return 'El codigo del estudiante ya existe';
+  }
+  return 'Ya existe un registro con uno de los datos unicos';
+};
