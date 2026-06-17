@@ -90,6 +90,21 @@ Estudiante.init({
   qr: { type: DataTypes.STRING, allowNull: false, unique: true }
 }, { sequelize, modelName: 'estudiante' });
 
+export class Acudiente extends Model {}
+Acudiente.init({
+  estudianteId: { type: DataTypes.INTEGER, allowNull: false },
+  nombre: { type: DataTypes.STRING, allowNull: false },
+  telefonoE164: { type: DataTypes.STRING(30), allowNull: false },
+  whatsappOptIn: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  parentesco: { type: DataTypes.STRING(60), allowNull: true },
+  activo: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true }
+}, {
+  sequelize,
+  modelName: 'acudiente',
+  tableName: 'acudientes',
+  indexes: [{ unique: true, fields: ['estudiante_id', 'telefono_e164'] }]
+});
+
 export class EstudianteMateria extends Model {}
 EstudianteMateria.init({
   id: { type: DataTypes.INTEGER, allowNull: false, autoIncrement: true, primaryKey: true },
@@ -125,6 +140,24 @@ Asistencia.init({
   ausente: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   schoolId: { type: DataTypes.INTEGER, allowNull: false }
 }, { sequelize, modelName: 'asistencia', tableName: 'asistencias', indexes: [{ unique: true, fields: ['fecha','estudiante_id','curso_id','school_id','materia_id'] }] });
+
+export class NotificacionWhatsApp extends Model {}
+NotificacionWhatsApp.init({
+  asistenciaId: { type: DataTypes.INTEGER, allowNull: false },
+  acudienteId: { type: DataTypes.INTEGER, allowNull: false },
+  template: { type: DataTypes.STRING(120), allowNull: false },
+  payload: { type: DataTypes.JSON, allowNull: false },
+  status: { type: DataTypes.ENUM('pending', 'sent', 'failed'), allowNull: false, defaultValue: 'pending' },
+  providerMessageId: { type: DataTypes.STRING(180), allowNull: true },
+  error: { type: DataTypes.TEXT, allowNull: true },
+  attempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  sentAt: { type: DataTypes.DATE, allowNull: true }
+}, {
+  sequelize,
+  modelName: 'notificacion_whatsapp',
+  tableName: 'notificaciones_whatsapp',
+  indexes: [{ unique: true, fields: ['asistencia_id', 'acudiente_id', 'template'] }]
+});
 
 // Associations
 Colegio.hasMany(Usuario, { foreignKey: { allowNull: true, name: 'schoolId' } });
@@ -163,6 +196,9 @@ Periodo.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId' } 
 Curso.hasMany(Estudiante, { foreignKey: { allowNull: false } });
 Estudiante.belongsTo(Curso);
 
+Estudiante.hasMany(Acudiente, { as: 'acudientes', foreignKey: { allowNull: false, name: 'estudianteId' }, onDelete: 'CASCADE' });
+Acudiente.belongsTo(Estudiante, { foreignKey: { allowNull: false, name: 'estudianteId' }, onDelete: 'CASCADE' });
+
 Curso.hasMany(EstudianteMateria, { foreignKey: { allowNull: false, name: 'cursoId' }, onDelete: 'CASCADE' });
 Estudiante.hasMany(EstudianteMateria, { foreignKey: { allowNull: false, name: 'estudianteId' }, onDelete: 'CASCADE' });
 Materia.hasMany(EstudianteMateria, { foreignKey: { allowNull: false, name: 'materiaId' }, onDelete: 'CASCADE' });
@@ -187,6 +223,11 @@ Asistencia.belongsTo(Colegio, { foreignKey: { allowNull: false, name: 'schoolId'
 Materia.hasMany(Asistencia, { foreignKey: { allowNull: true, name: 'materiaId' } });
 Asistencia.belongsTo(Materia, { as: 'materia', foreignKey: { allowNull: true, name: 'materiaId' } });
 
+Asistencia.hasMany(NotificacionWhatsApp, { as: 'notificacionesWhatsApp', foreignKey: { allowNull: false, name: 'asistenciaId' }, onDelete: 'CASCADE' });
+NotificacionWhatsApp.belongsTo(Asistencia, { foreignKey: { allowNull: false, name: 'asistenciaId' }, onDelete: 'CASCADE' });
+Acudiente.hasMany(NotificacionWhatsApp, { as: 'notificacionesWhatsApp', foreignKey: { allowNull: false, name: 'acudienteId' }, onDelete: 'CASCADE' });
+NotificacionWhatsApp.belongsTo(Acudiente, { as: 'acudiente', foreignKey: { allowNull: false, name: 'acudienteId' }, onDelete: 'CASCADE' });
+
 export default {
   Colegio,
   Sede,
@@ -197,8 +238,10 @@ export default {
   Materia,
   DocenteCursoMateria,
   Estudiante,
+  Acudiente,
   EstudianteMateria,
   Periodo,
   Asistencia,
+  NotificacionWhatsApp,
   sequelize
 };

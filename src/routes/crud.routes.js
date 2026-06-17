@@ -53,6 +53,7 @@ import {
 } from '../middleware/validators.js';
 import { handleValidation } from '../middleware/validationResult.js';
 import { asyncHandler } from '../middleware/errors.js';
+import { listarNotificacionesWhatsApp } from '../controllers/notificaciones-whatsapp.controller.js';
 
 const router = Router();
 router.post('/cursos', authRequired, requireRole('admin', 'rector', 'coordinador'), crearCursoRules, handleValidation, asyncHandler(crearCurso));
@@ -87,5 +88,6 @@ router.post('/docentes', authRequired, requireRole('admin', 'rector', 'coordinad
 router.put('/docentes/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), actualizarDocenteRules, handleValidation, asyncHandler(actualizarDocente));
 router.delete('/docentes/:id', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(eliminarDocente));
 router.post('/docentes/:id/reset-password', authRequired, requireRole('admin'), resetDocentePasswordRules, handleValidation, asyncHandler(resetearClaveDocente));
+router.get('/notificaciones-whatsapp', authRequired, requireRole('admin', 'rector', 'coordinador'), asyncHandler(listarNotificacionesWhatsApp));
 
 export default router;

@@ -4,6 +4,7 @@ import { Asistencia, Estudiante, Curso, Periodo, CursoDocente, DocenteCursoMater
 import { calcularPorcentajeInasistencia } from '../utils/calc.js';
 import { aggregateAttendanceRowsByStudentDate, normalizeEstadoAsistencia } from '../utils/asistenciaAggregation.js';
 import { recordMetric } from '../utils/observability.js';
+import { scheduleWhatsAppAbsenceNotification } from '../services/whatsappAbsenceNotifications.js';
 
 const ESTADOS_ASISTENCIA = ['presente', 'tarde', 'afuera', 'ausente'];
 const isAdmin = (req) => req.user?.rol === 'admin';
@@ -370,6 +371,9 @@ export async function registrarDesdeQR(req, res) {
       }
     } catch {}
     recordMetric('asistenciaRegistradaTotal');
+    if (registro.estado === 'ausente') {
+      scheduleWhatsAppAbsenceNotification({ asistenciaId: registro.id });
+    }
     res.status(201).json({ message: 'Asistencia registrada', registro });
   } catch (e) {
     if (clientRequestId && e.name === 'SequelizeUniqueConstraintError') {

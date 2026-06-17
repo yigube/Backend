@@ -3,7 +3,7 @@ import request from 'supertest';
 import bcrypt from 'bcrypt';
 import { init } from '../src/app.js';
 import { sequelize } from '../src/config/database.js';
-import { Usuario, Colegio, Curso, CursoDocente, Estudiante, EstudianteMateria, Periodo, Rector, Materia, DocenteCursoMateria, Asistencia } from '../src/models/index.js';
+import { Usuario, Colegio, Curso, CursoDocente, Estudiante, EstudianteMateria, Periodo, Rector, Materia, DocenteCursoMateria, Asistencia, Acudiente, NotificacionWhatsApp } from '../src/models/index.js';
 import { resetLoginRateLimitBuckets } from '../src/middleware/rateLimit.js';
 import { resetMetrics } from '../src/utils/observability.js';
 
@@ -52,6 +52,17 @@ async function asignarCursoADocente(cursoId, schoolId = school.id, email = 'doce
     defaults: { usuarioId: docente.id, cursoId, schoolId }
   });
   return docente;
+}
+
+async function waitForCondition(predicate, { timeoutMs = 1200, intervalMs = 25 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await predicate()) return true;
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
 }
 
 beforeAll(async () => {
@@ -1928,6 +1939,55 @@ test('Registra asistencia por QR dentro de periodo activo', async () => {
 
   const registroDb = await Asistencia.findByPk(res.body.registro.id);
   expect(registroDb?.horaRegistro).toBeTruthy();
+});
+
+test('Registra trazabilidad WhatsApp cuando la asistencia queda ausente', async () => {
+  await Acudiente.create({
+    estudianteId: studentA.id,
+    nombre: 'Madre Demo',
+    telefonoE164: '+573001112233',
+    whatsappOptIn: true,
+    parentesco: 'madre',
+    activo: true
+  });
+
+  const res = await registrarAsistencia(teacherToken, {
+    qr: studentA.qr,
+    cursoId: curso.id,
+    fecha: '2025-01-10',
+    estado: 'ausente',
+    materia: defaultMateria.nombre
+  });
+
+  expect(res.status).toBe(201);
+  expect(res.body.registro.estado).toBe('ausente');
+
+  const processed = await waitForCondition(async () => (
+    await NotificacionWhatsApp.count({ where: { asistenciaId: res.body.registro.id } })
+  ) > 0);
+  expect(processed).toBe(true);
+
+  const notification = await NotificacionWhatsApp.findOne({ where: { asistenciaId: res.body.registro.id } });
+  expect(notification).toMatchObject({
+    status: 'failed',
+    attempts: 1,
+    template: 'student_absence_v1',
+    error: 'WHATSAPP_PROVIDER_DISABLED'
+  });
+
+  const trace = await request(app)
+    .get('/notificaciones-whatsapp')
+    .set('Authorization', `Bearer ${adminToken}`);
+
+  expect(trace.status).toBe(200);
+  expect(trace.body).toEqual([
+    expect.objectContaining({
+      asistenciaId: res.body.registro.id,
+      status: 'failed',
+      estudiante: expect.objectContaining({ id: studentA.id, nombre: 'Ana Lopez' }),
+      acudiente: expect.objectContaining({ nombre: 'Madre Demo', telefonoE164: '+573001112233' })
+    })
+  ]);
 });
 
 test('Rechaza un segundo registro de asistencia para la misma clase', async () => {

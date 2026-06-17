@@ -2,6 +2,7 @@
 import { body, query, param } from 'express-validator';
 const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 const NIVEL_VALUES = ['primaria', 'secundaria'];
+const e164Regex = /^\+[1-9]\d{7,14}$/;
 
 const materiasPorCursoValidator = (value) => {
   if (value === undefined) return true;
@@ -75,7 +76,13 @@ export const crearEstudianteRules = [
   body('codigoEstudiante').optional({ values: 'falsy' }).isString().isLength({ max: 100 }),
   body('cursoId').isInt({ min: 1 }),
   body('materias').optional().isArray(),
-  body('materias.*').optional().isString().notEmpty().isLength({ max: 255 })
+  body('materias.*').optional().isString().notEmpty().isLength({ max: 255 }),
+  body('acudiente').optional().isObject().withMessage('acudiente invalido'),
+  body('acudiente.nombre').optional({ values: 'falsy' }).isString().trim().isLength({ min: 2, max: 120 }).withMessage('Nombre del acudiente invalido'),
+  body('acudiente.telefonoE164').optional({ values: 'falsy' }).isString().trim().matches(e164Regex).withMessage('Telefono WhatsApp invalido. Usa formato E.164, por ejemplo +573001112233'),
+  body('acudiente.parentesco').optional({ values: 'falsy' }).isString().trim().isLength({ max: 60 }).withMessage('Parentesco invalido'),
+  body('acudiente.whatsappOptIn').optional().isBoolean().withMessage('Consentimiento WhatsApp invalido'),
+  body('acudiente.activo').optional().isBoolean().withMessage('Estado del acudiente invalido')
 ];
 
 export const crearEstudiantesLoteRules = [
@@ -96,7 +103,13 @@ export const actualizarEstudianteRules = [
   body('codigoEstudiante').optional({ values: 'falsy' }).isString().isLength({ max: 100 }),
   body('cursoId').optional().isInt({ min: 1 }),
   body('materias').optional().isArray(),
-  body('materias.*').optional().isString().notEmpty().isLength({ max: 255 })
+  body('materias.*').optional().isString().notEmpty().isLength({ max: 255 }),
+  body('acudiente').optional().isObject().withMessage('acudiente invalido'),
+  body('acudiente.nombre').optional({ values: 'falsy' }).isString().trim().isLength({ min: 2, max: 120 }).withMessage('Nombre del acudiente invalido'),
+  body('acudiente.telefonoE164').optional({ values: 'falsy' }).isString().trim().matches(e164Regex).withMessage('Telefono WhatsApp invalido. Usa formato E.164, por ejemplo +573001112233'),
+  body('acudiente.parentesco').optional({ values: 'falsy' }).isString().trim().isLength({ max: 60 }).withMessage('Parentesco invalido'),
+  body('acudiente.whatsappOptIn').optional().isBoolean().withMessage('Consentimiento WhatsApp invalido'),
+  body('acudiente.activo').optional().isBoolean().withMessage('Estado del acudiente invalido')
 ];
 export const eliminarEstudianteRules = [
   param('id').isInt({ min: 1 })

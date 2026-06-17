@@ -2,6 +2,7 @@ import { Op, UniqueConstraintError } from 'sequelize';
 import { sequelize } from '../config/database.js';
 import {
   Asistencia,
+  Acudiente,
   Curso,
   DocenteCursoMateria,
   Estudiante,
@@ -109,6 +110,47 @@ const normalizeMateriasLista = (value) => {
   return result;
 };
 
+const normalizeBoolean = (value) => value === true || String(value).trim().toLowerCase() === 'true';
+
+const normalizeAcudientePayload = (value = {}) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const nombre = normalizeOptionalText(value.nombre);
+  const telefonoE164 = normalizeOptionalText(value.telefonoE164);
+  const parentesco = normalizeOptionalText(value.parentesco);
+  const whatsappOptIn = normalizeBoolean(value.whatsappOptIn);
+  const activo = Object.prototype.hasOwnProperty.call(value, 'activo')
+    ? normalizeBoolean(value.activo)
+    : true;
+  if (!nombre && !telefonoE164 && !parentesco && !whatsappOptIn) return null;
+  return { nombre, telefonoE164, parentesco, whatsappOptIn, activo };
+};
+
+const syncAcudientePrincipal = async ({ estudianteId, acudiente, transaction } = {}) => {
+  const normalized = normalizeAcudientePayload(acudiente);
+  if (!normalized) return null;
+  if (!normalized.nombre || !normalized.telefonoE164) {
+    throw new Error('Nombre y telefono del acudiente son requeridos');
+  }
+
+  const [row] = await Acudiente.findOrCreate({
+    where: {
+      estudianteId,
+      telefonoE164: normalized.telefonoE164
+    },
+    defaults: {
+      estudianteId,
+      ...normalized
+    },
+    transaction
+  });
+  row.nombre = normalized.nombre;
+  row.parentesco = normalized.parentesco || null;
+  row.whatsappOptIn = normalized.whatsappOptIn;
+  row.activo = normalized.activo;
+  await row.save({ transaction });
+  return row;
+};
+
 const mapMateriasToEstudiantes = (estudiantes = [], materiaLinks = [], faltasResumenMap = null) => {
   const materiasMap = new Map();
   materiaLinks.forEach((link) => {
@@ -126,6 +168,9 @@ const mapMateriasToEstudiantes = (estudiantes = [], materiaLinks = [], faltasRes
     return {
       ...raw,
       materias: materiasMap.get(Number(raw?.id)) || [],
+      acudiente: Array.isArray(raw?.acudientes) && raw.acudientes.length
+        ? raw.acudientes[0]
+        : null,
       ...(includeFaltas
         ? {
             faltas: faltasResumenMap.get(Number(raw?.id)) || {
@@ -251,16 +296,25 @@ export async function crearEstudiante(req, res) {
         materias: req.body.materias,
         transaction
       });
+      await syncAcudientePrincipal({
+        estudianteId: obj.id,
+        acudiente: req.body.acudiente,
+        transaction
+      });
       const materiaLinks = await EstudianteMateria.findAll({
         where: { estudianteId: obj.id },
         include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }],
         transaction
       });
-      return mapMateriasToEstudiantes([obj], materiaLinks)[0];
+      const createdWithAcudiente = await Estudiante.findByPk(obj.id, {
+        include: [{ model: Acudiente, as: 'acudientes' }],
+        transaction
+      });
+      return mapMateriasToEstudiantes([createdWithAcudiente || obj], materiaLinks)[0];
     });
     return res.status(201).json(created);
   } catch (error) {
-    if (error?.message === 'Las materias seleccionadas no corresponden al curso') {
+    if (error?.message === 'Las materias seleccionadas no corresponden al curso' || error?.message === 'Nombre y telefono del acudiente son requeridos') {
       return res.status(400).json({ error: error.message });
     }
     if (error instanceof UniqueConstraintError) {
@@ -377,6 +431,22 @@ export async function listarEstudiantes(req, res) {
     include: { model: Curso, where: cursoWhere, attributes: [] },
     order: [['apellidos', 'ASC'], ['nombres', 'ASC']]
   });
+  const acudientes = ests.length
+    ? await Acudiente.findAll({
+        where: { estudianteId: { [Op.in]: ests.map((item) => item.id) } },
+        order: [['id', 'ASC']]
+      })
+    : [];
+  const acudientesByEstudiante = new Map();
+  acudientes.forEach((item) => {
+    const estudianteId = Number(item?.estudianteId);
+    const current = acudientesByEstudiante.get(estudianteId) || [];
+    current.push(item);
+    acudientesByEstudiante.set(estudianteId, current);
+  });
+  ests.forEach((item) => {
+    item.setDataValue('acudientes', acudientesByEstudiante.get(Number(item.id)) || []);
+  });
 
   if (isDocente(req)) {
     const visible = await filterVisibleEstudiantesForDocente({ req, schoolId, estudiantes: ests });
@@ -482,11 +552,26 @@ export async function actualizarEstudiante(req, res) {
         include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }],
         transaction
       });
-      return mapMateriasToEstudiantes([estudiante], materiaLinks)[0];
+      if (Object.prototype.hasOwnProperty.call(req.body, 'acudiente')) {
+        await syncAcudientePrincipal({
+          estudianteId: estudiante.id,
+          acudiente: req.body.acudiente,
+          transaction
+        });
+      }
+      const updatedWithAcudiente = await Estudiante.findByPk(estudiante.id, {
+        include: [{ model: Acudiente, as: 'acudientes' }],
+        transaction
+      });
+      return mapMateriasToEstudiantes([updatedWithAcudiente || estudiante], materiaLinks)[0];
     });
     return res.json(updated);
   } catch (error) {
-    if (error?.message === 'Las materias seleccionadas no corresponden al curso' || error?.message === 'Curso no encontrado') {
+    if (
+      error?.message === 'Las materias seleccionadas no corresponden al curso'
+      || error?.message === 'Curso no encontrado'
+      || error?.message === 'Nombre y telefono del acudiente son requeridos'
+    ) {
       return res.status(400).json({ error: error.message });
     }
     if (error instanceof UniqueConstraintError) {
