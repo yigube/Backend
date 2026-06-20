@@ -4,7 +4,7 @@ import { Asistencia, Estudiante, Curso, Periodo, CursoDocente, DocenteCursoMater
 import { calcularPorcentajeInasistencia } from '../utils/calc.js';
 import { aggregateAttendanceRowsByStudentDate, normalizeEstadoAsistencia } from '../utils/asistenciaAggregation.js';
 import { recordMetric } from '../utils/observability.js';
-import { scheduleWhatsAppAbsenceNotification } from '../services/whatsappAbsenceNotifications.js';
+import { processWhatsAppAbsenceNotification } from '../services/whatsappAbsenceNotifications.js';
 
 const ESTADOS_ASISTENCIA = ['presente', 'tarde', 'afuera', 'ausente'];
 const isAdmin = (req) => req.user?.rol === 'admin';
@@ -371,10 +371,24 @@ export async function registrarDesdeQR(req, res) {
       }
     } catch {}
     recordMetric('asistenciaRegistradaTotal');
+    let whatsappNotification = null;
     if (registro.estado === 'ausente') {
-      scheduleWhatsAppAbsenceNotification({ asistenciaId: registro.id });
+      const notificationResult = await processWhatsAppAbsenceNotification({ asistenciaId: registro.id });
+      const sentCount = Number(notificationResult?.sent || 0);
+      const notificationCount = sentCount
+        + Number(notificationResult?.queued || 0)
+        + Number(notificationResult?.failed || 0);
+      whatsappNotification = {
+        ...notificationResult,
+        sentCount,
+        sent: sentCount > 0,
+        showUserMessage: notificationCount > 0,
+        message: notificationCount > 0
+          ? 'Notificacion enviada al WhatsApp registrado'
+          : ''
+      };
     }
-    res.status(201).json({ message: 'Asistencia registrada', registro });
+    res.status(201).json({ message: 'Asistencia registrada', registro, whatsappNotification });
   } catch (e) {
     if (clientRequestId && e.name === 'SequelizeUniqueConstraintError') {
       const replay = await Asistencia.findOne({

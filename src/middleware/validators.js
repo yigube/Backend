@@ -92,6 +92,12 @@ export const crearEstudiantesLoteRules = [
   body('estudiantes.*.apellidos').isString().notEmpty(),
   body('estudiantes.*.qr').isString().notEmpty().isLength({ max: 255 }),
   body('estudiantes.*.codigoEstudiante').optional({ values: 'falsy' }).isString().isLength({ max: 100 }),
+  body('estudiantes.*.acudiente').optional().isObject().withMessage('acudiente invalido'),
+  body('estudiantes.*.acudiente.nombre').optional({ values: 'falsy' }).isString().trim().isLength({ min: 2, max: 120 }).withMessage('Nombre del acudiente invalido'),
+  body('estudiantes.*.acudiente.telefonoE164').optional({ values: 'falsy' }).isString().trim().matches(e164Regex).withMessage('Telefono WhatsApp invalido. Usa formato E.164, por ejemplo +573001112233'),
+  body('estudiantes.*.acudiente.parentesco').optional({ values: 'falsy' }).isString().trim().isLength({ max: 60 }).withMessage('Parentesco invalido'),
+  body('estudiantes.*.acudiente.whatsappOptIn').optional().isBoolean().withMessage('Consentimiento WhatsApp invalido'),
+  body('estudiantes.*.acudiente.activo').optional().isBoolean().withMessage('Estado del acudiente invalido'),
   body('materias').optional().isArray(),
   body('materias.*').optional().isString().notEmpty().isLength({ max: 255 })
 ];

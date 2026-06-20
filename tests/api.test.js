@@ -21,6 +21,7 @@ let periodo;
 let studentA;
 let studentB;
 let defaultMateria;
+const ORIGINAL_WHATSAPP_PROVIDER = process.env.WHATSAPP_PROVIDER;
 
 async function getSchoolMateriasWithoutDefault(schoolId = school?.id) {
   const rows = await Materia.findAll({ where: { schoolId }, order: [['nombre', 'ASC']] });
@@ -72,6 +73,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   resetLoginRateLimitBuckets();
   resetMetrics();
+  process.env.WHATSAPP_PROVIDER = 'disabled';
   await sequelize.sync({ force: true });
   school = await Colegio.create({ nombre: 'Colegio Test' });
   otherSchool = await Colegio.create({ nombre: 'Colegio Dos' });
@@ -146,6 +148,11 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (ORIGINAL_WHATSAPP_PROVIDER === undefined) {
+    delete process.env.WHATSAPP_PROVIDER;
+  } else {
+    process.env.WHATSAPP_PROVIDER = ORIGINAL_WHATSAPP_PROVIDER;
+  }
   await sequelize.close();
 });
 
@@ -333,6 +340,54 @@ test('Docente solo ve los cursos que tiene asignados', async () => {
   expect(res.body.map((item) => item.id).sort((a, b) => a - b)).toEqual([curso.id, cursoDos.id].sort((a, b) => a - b));
   expect(res.body.some((item) => item.id === cursoTres.id)).toBe(false);
   expect(res.body.some((item) => item.id === otroCurso.id)).toBe(false);
+});
+
+test('Docente carga estudiantes por lote con acudiente para WhatsApp', async () => {
+  const resCreate = await request(app)
+    .post('/estudiantes/lote')
+    .set('Authorization', `Bearer ${teacherToken}`)
+    .send({
+      cursoId: curso.id,
+      materias: [defaultMateria.nombre],
+      estudiantes: [{
+        nombres: 'Camila',
+        apellidos: 'Rojas',
+        qr: 'QR-CAMILA-LOTE',
+        codigoEstudiante: 'EST-LOTE-1',
+        acudiente: {
+          nombre: 'Madre Lote',
+          telefonoE164: '+573001112233',
+          parentesco: 'Madre',
+          whatsappOptIn: true,
+          activo: true
+        }
+      }]
+    });
+
+  expect(resCreate.status).toBe(201);
+  expect(resCreate.body.created).toBe(1);
+  expect(resCreate.body.students[0].acudiente).toEqual(expect.objectContaining({
+    nombre: 'Madre Lote',
+    telefonoE164: '+573001112233',
+    parentesco: 'Madre',
+    whatsappOptIn: true
+  }));
+
+  const acudiente = await Acudiente.findOne({ where: { telefonoE164: '+573001112233' } });
+  expect(acudiente).toBeTruthy();
+  expect(acudiente.whatsappOptIn).toBe(true);
+
+  const resList = await request(app)
+    .get(`/estudiantes?cursoId=${curso.id}`)
+    .set('Authorization', `Bearer ${teacherToken}`);
+  expect(resList.status).toBe(200);
+  const created = resList.body.find((item) => item.codigoEstudiante === 'EST-LOTE-1');
+  expect(created?.acudiente).toEqual(expect.objectContaining({
+    nombre: 'Madre Lote',
+    telefonoE164: '+573001112233',
+    parentesco: 'Madre',
+    whatsappOptIn: true
+  }));
 });
 
 test('Admin crea, actualiza y elimina curso en otro colegio', async () => {
@@ -1961,6 +2016,12 @@ test('Registra trazabilidad WhatsApp cuando la asistencia queda ausente', async 
 
   expect(res.status).toBe(201);
   expect(res.body.registro.estado).toBe('ausente');
+  expect(res.body.whatsappNotification).toEqual(expect.objectContaining({
+    sent: false,
+    showUserMessage: true,
+    failed: 1,
+    message: 'Notificacion enviada al WhatsApp registrado'
+  }));
 
   const processed = await waitForCondition(async () => (
     await NotificacionWhatsApp.count({ where: { asistenciaId: res.body.registro.id } })
@@ -1988,6 +2049,44 @@ test('Registra trazabilidad WhatsApp cuando la asistencia queda ausente', async 
       acudiente: expect.objectContaining({ nombre: 'Madre Demo', telefonoE164: '+573001112233' })
     })
   ]);
+});
+
+test('Informa al cliente cuando la notificacion WhatsApp fue enviada', async () => {
+  process.env.WHATSAPP_PROVIDER = 'mock';
+  await Acudiente.create({
+    estudianteId: studentB.id,
+    nombre: 'Padre Demo',
+    telefonoE164: '+573009998877',
+    whatsappOptIn: true,
+    parentesco: 'padre',
+    activo: true
+  });
+
+  const res = await registrarAsistencia(teacherToken, {
+    qr: studentB.qr,
+    cursoId: curso.id,
+    fecha: '2025-01-11',
+    estado: 'ausente',
+    materia: defaultMateria.nombre
+  });
+
+  expect(res.status).toBe(201);
+  expect(res.body.whatsappNotification).toEqual(expect.objectContaining({
+    sent: true,
+    showUserMessage: true,
+    sentCount: 1,
+    failed: 0,
+    message: 'Notificacion enviada al WhatsApp registrado'
+  }));
+
+  const notification = await NotificacionWhatsApp.findOne({ where: { asistenciaId: res.body.registro.id } });
+  expect(notification).toMatchObject({
+    status: 'sent',
+    attempts: 1,
+    template: 'student_absence_v1',
+    error: null
+  });
+  expect(notification.providerMessageId).toContain('mock-student_absence_v1-');
 });
 
 test('Rechaza un segundo registro de asistencia para la misma clase', async () => {

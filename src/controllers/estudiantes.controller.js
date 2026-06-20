@@ -356,6 +356,7 @@ export async function crearEstudiantesLote(req, res) {
     apellidos: normalizeOptionalText(item?.apellidos),
     qr: normalizeOptionalText(item?.qr),
     codigoEstudiante: normalizeOptionalText(item?.codigoEstudiante),
+    acudiente: normalizeAcudientePayload(item?.acudiente),
     cursoId
   }));
 
@@ -363,13 +364,24 @@ export async function crearEstudiantesLote(req, res) {
   if (invalid) {
     return res.status(400).json({ error: `Fila ${invalid.row}: nombres, apellidos y qr son requeridos` });
   }
+  const invalidAcudiente = payload.find((item) => item.acudiente && (!item.acudiente.nombre || !item.acudiente.telefonoE164));
+  if (invalidAcudiente) {
+    return res.status(400).json({ error: `Fila ${invalidAcudiente.row}: nombre y telefono del acudiente son requeridos` });
+  }
 
   try {
     const createdRows = await sequelize.transaction(async (transaction) => {
-      const created = await Estudiante.bulkCreate(payload.map(({ row, ...rest }) => rest), {
+      const created = await Estudiante.bulkCreate(payload.map(({ row, acudiente, ...rest }) => rest), {
         validate: true,
         transaction
       });
+      for (let index = 0; index < created.length; index += 1) {
+        await syncAcudientePrincipal({
+          estudianteId: created[index].id,
+          acudiente: payload[index]?.acudiente,
+          transaction
+        });
+      }
       await syncMateriasEstudiante({
         req,
         estudianteIds: created.map((item) => item.id),
@@ -383,12 +395,13 @@ export async function crearEstudiantesLote(req, res) {
         include: [{ model: Materia, as: 'materia', attributes: ['id', 'nombre'] }],
         transaction
       });
-      return mapMateriasToEstudiantes(created, materiaLinks).map((item) => ({
+      return mapMateriasToEstudiantes(created, materiaLinks).map((item, index) => ({
         id: item.id,
         nombres: item.nombres,
         apellidos: item.apellidos,
         qr: item.qr,
         codigoEstudiante: item.codigoEstudiante,
+        acudiente: payload[index]?.acudiente || null,
         materias: item.materias || []
       }));
     });
